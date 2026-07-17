@@ -60,7 +60,16 @@ BOT.FOREX/
 │       └── notifications/           # Módulo D: Telegram
 │
 └── frontend/                        # ── REACT + Tailwind + Recharts ──
-    └── (Módulo E: Dashboard — se genera en el siguiente paso)
+    ├── package.json                 # Vite + React 18 + Tailwind 3 + Recharts
+    ├── vite.config.js               # Proxy /api y /ws → backend :8000
+    ├── tailwind.config.js           # Tema "trading terminal" (dark)
+    └── src/
+        ├── api/                     # Cliente HTTP (JWT) + WebSocket
+        ├── store/                   # Estado global (zustand): auth + live
+        ├── components/              # Panel, StatCard, badges, tooltip
+        ├── layouts/                 # Sidebar colapsable + topbar
+        └── pages/                   # Login, LiveTrading, Analytics,
+                                     # Backtest, Settings (4 pestañas)
 ```
 
 ## 2. Comunicación Backend ↔ Frontend
@@ -88,6 +97,18 @@ uvicorn app.main:app --reload --port 8000
 
 Documentación interactiva de la API: `http://localhost:8000/docs` (Swagger UI).
 
+## 3b. Puesta en Marcha (Frontend)
+
+```bash
+cd frontend
+npm install
+npm run dev        # dashboard en http://localhost:5173
+```
+
+El dev-server de Vite proxea `/api` y `/ws` al backend (puerto 8000), así que
+basta con tener ambos procesos corriendo. Para producción: `npm run build`
+genera `frontend/dist/` listo para servir como estáticos.
+
 ## 4. Seguridad
 
 - Contraseñas de usuario: hash **bcrypt** (nunca en texto plano).
@@ -104,4 +125,4 @@ Documentación interactiva de la API: `http://localhost:8000/docs` (Swagger UI).
 | B | Motor de trading y gestión de riesgo (SL/TP, break-even, trailing, lote dinámico) | ✅ Implementado |
 | C | Motor de backtesting (equity curve, drawdown, sharpe) | ✅ Implementado |
 | D | Notificaciones Telegram | ✅ Implementado |
-| E | Dashboard React (Live, Analytics, Backtest) | ⏳ Siguiente |
+| E | Dashboard React (Live, Analytics, Backtest) | ✅ Implementado |

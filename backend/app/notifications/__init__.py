@@ -1,8 +1,11 @@
 """
-Módulo D — Notificaciones Telegram (pendiente).
+Módulo D — Notificaciones Telegram.
 
-Contendrá:
-- telegram_service.py : envío de mensajes Markdown vía Bot API (httpx),
-                        test de conexión, y plantillas de alerta para
-                        apertura, break-even y cierre de operaciones.
+- telegram_service.py : cliente de la Bot API, plantillas Markdown de
+  alertas (apertura, break-even, trailing, cierre, estado del bot) y el
+  `TelegramNotifier` global suscrito al event_bus.
 """
+
+from app.notifications.telegram_service import notifier, send_message, test_connection
+
+__all__ = ["notifier", "send_message", "test_connection"]

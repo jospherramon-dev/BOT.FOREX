@@ -203,6 +203,7 @@ class TradingEngine:
         await event_bus.publish(
             "trade_updated",
             {
+                "user_id": self.user_id,
                 "trade_id": trade.id,
                 "symbol": trade.symbol,
                 "stop_loss": new_sl,
@@ -253,6 +254,7 @@ class TradingEngine:
         await event_bus.publish(
             "trade_closed",
             {
+                "user_id": self.user_id,
                 "trade_id": trade.id,
                 "symbol": trade.symbol,
                 "direction": trade.direction.value,
@@ -364,6 +366,7 @@ class TradingEngine:
         await event_bus.publish(
             "trade_opened",
             {
+                "user_id": self.user_id,
                 "trade_id": trade.id,
                 "symbol": asset.symbol,
                 "direction": direction,

@@ -13,10 +13,11 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import assets, auth, backtest, bot, broker, ws
+from app.api.routes import assets, auth, backtest, bot, broker, telegram, ws
 from app.core.config import settings
 from app.core.logger import setup_logging
 from app.db.database import init_db
+from app.notifications.telegram_service import notifier
 
 logger = logging.getLogger(__name__)
 
@@ -26,8 +27,10 @@ async def lifespan(app: FastAPI):
     """Inicialización y apagado ordenado de la aplicación."""
     setup_logging()
     init_db()
+    await notifier.start()  # Módulo D: escucha el event_bus
     logger.info("%s iniciado | entorno=%s", settings.APP_NAME, settings.ENVIRONMENT)
     yield
+    await notifier.stop()
     logger.info("%s detenido", settings.APP_NAME)
 
 
@@ -63,7 +66,8 @@ app.include_router(ws.router)  # /ws/live (sin prefijo de versión)
 # --- Rutas del Módulo C (backtesting) ------------------------------------
 app.include_router(backtest.router, prefix=settings.API_V1_PREFIX)
 
-# El router del Módulo D (telegram) se incluirá cuando se implemente.
+# --- Rutas del Módulo D (notificaciones Telegram) -------------------------
+app.include_router(telegram.router, prefix=settings.API_V1_PREFIX)
 
 
 @app.get("/health", tags=["Sistema"])

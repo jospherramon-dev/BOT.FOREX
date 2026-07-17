@@ -103,5 +103,5 @@ Documentación interactiva de la API: `http://localhost:8000/docs` (Swagger UI).
 | A | Autenticación, credenciales broker, selector de activos | ✅ Implementado |
 | B | Motor de trading y gestión de riesgo (SL/TP, break-even, trailing, lote dinámico) | ✅ Implementado |
 | C | Motor de backtesting (equity curve, drawdown, sharpe) | ✅ Implementado |
-| D | Notificaciones Telegram | ⏳ Siguiente |
-| E | Dashboard React (Live, Analytics, Backtest) | ⏳ Pendiente |
+| D | Notificaciones Telegram | ✅ Implementado |
+| E | Dashboard React (Live, Analytics, Backtest) | ⏳ Siguiente |

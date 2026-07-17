@@ -123,7 +123,9 @@ async def start_bot(db: DBSession, current_user: CurrentUser) -> dict:
     db.commit()
 
     await start_engine(current_user.id, connector)
-    await event_bus.publish("bot_status", {"running": True})
+    await event_bus.publish(
+        "bot_status", {"user_id": current_user.id, "running": True}
+    )
     return {"running": True, "message": "Bot iniciado"}
 
 
@@ -135,7 +137,9 @@ async def stop_bot(db: DBSession, current_user: CurrentUser) -> dict:
     db.commit()
 
     stopped = await stop_engine(current_user.id)
-    await event_bus.publish("bot_status", {"running": False})
+    await event_bus.publish(
+        "bot_status", {"user_id": current_user.id, "running": False}
+    )
     return {
         "running": False,
         "message": "Bot detenido" if stopped else "El bot no estaba en ejecución",
@@ -265,6 +269,7 @@ async def close_trade_manually(
     await event_bus.publish(
         "trade_closed",
         {
+            "user_id": current_user.id,
             "trade_id": trade.id,
             "symbol": trade.symbol,
             "direction": trade.direction.value,

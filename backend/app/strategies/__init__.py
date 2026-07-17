@@ -8,9 +8,11 @@ sumarla al registro.
 
 from app.strategies.base_strategy import BaseStrategy, Signal, SignalType
 from app.strategies.ma_rsi_crossover import MaRsiCrossoverStrategy
+from app.strategies.scalping_bb_rsi import ScalpingBbRsiStrategy
 
 STRATEGY_REGISTRY: dict[str, type[BaseStrategy]] = {
     MaRsiCrossoverStrategy.name: MaRsiCrossoverStrategy,
+    ScalpingBbRsiStrategy.name: ScalpingBbRsiStrategy,
 }
 
 

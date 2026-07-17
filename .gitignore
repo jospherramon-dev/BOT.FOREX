@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
+# Entornos y secretos
+.env
+*.key
+secret.key
+
+# Base de datos local
+*.db
+*.sqlite3
+
+# Node / React
+frontend/node_modules/
+frontend/dist/
+frontend/build/
+frontend/.vite/
+
+# Datos históricos pesados (se suben solo muestras)
+backend/data/historical/*.csv
+!backend/data/historical/.gitkeep
+
+# IDE / SO
+.vscode/
+.idea/
+.DS_Store

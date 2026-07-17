@@ -1,0 +1,56 @@
+"""
+Capa de conexión a la base de datos (SQLAlchemy 2.0).
+
+Compatible con SQLite (por defecto, cero configuración) y PostgreSQL
+(cambiando DATABASE_URL en el .env). Expone:
+
+- `engine`        : motor de conexión.
+- `SessionLocal`  : fábrica de sesiones por-request.
+- `Base`          : clase declarativa de la que heredan los modelos.
+- `get_db()`      : dependencia FastAPI que abre/cierra sesión por petición.
+- `init_db()`     : crea las tablas al arrancar (en producción usar Alembic).
+"""
+
+from collections.abc import Generator
+
+from sqlalchemy import create_engine
+from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+
+from app.core.config import settings
+
+# SQLite necesita `check_same_thread=False` porque FastAPI puede atender la
+# misma sesión desde distintos hilos del threadpool.
+_connect_args = (
+    {"check_same_thread": False}
+    if settings.DATABASE_URL.startswith("sqlite")
+    else {}
+)
+
+engine = create_engine(
+    settings.DATABASE_URL,
+    connect_args=_connect_args,
+    pool_pre_ping=True,  # descarta conexiones muertas (útil en PostgreSQL)
+)
+
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+
+class Base(DeclarativeBase):
+    """Base declarativa común para todos los modelos ORM."""
+
+
+def get_db() -> Generator[Session, None, None]:
+    """Dependencia FastAPI: una sesión por petición, siempre cerrada al final."""
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+def init_db() -> None:
+    """Crea todas las tablas registradas en Base. Idempotente."""
+    # Importar los modelos registra sus tablas en Base.metadata.
+    from app.db import models  # noqa: F401
+
+    Base.metadata.create_all(bind=engine)

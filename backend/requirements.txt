@@ -1,0 +1,30 @@
+# ── Framework web ──────────────────────────────────────────────
+fastapi>=0.111.0
+uvicorn[standard]>=0.30.0
+python-multipart>=0.0.9          # formularios OAuth2 (login)
+
+# ── Base de datos ──────────────────────────────────────────────
+sqlalchemy>=2.0.30
+
+# ── Seguridad ──────────────────────────────────────────────────
+pyjwt>=2.8.0                     # firma/verificación de JWT
+bcrypt>=4.1.0                    # hashing de contraseñas
+cryptography>=42.0.0             # cifrado Fernet de credenciales
+
+# ── Configuración ──────────────────────────────────────────────
+pydantic>=2.7.0
+pydantic-settings>=2.2.0
+email-validator>=2.1.0           # validación EmailStr en schemas
+
+# ── Datos y análisis ───────────────────────────────────────────
+pandas>=2.2.0
+numpy>=1.26.0
+
+# ── HTTP asíncrono (OANDA, Telegram) ───────────────────────────
+httpx>=0.27.0
+
+# ── Broker MetaTrader 5 (SOLO Windows; opcional) ───────────────
+# MetaTrader5>=5.0.45            # descomentar si se opera vía MT5 en Windows
+
+# ── Testing ────────────────────────────────────────────────────
+pytest>=8.2.0

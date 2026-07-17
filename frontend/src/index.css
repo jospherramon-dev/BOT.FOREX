@@ -1,0 +1,71 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Tinta y superficies base del terminal */
+body {
+  @apply bg-term-bg text-term-text antialiased;
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+/* Los números de tablas, ejes y métricas alinean en columna */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Scrollbars discretos acordes al tema */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #1e2b45 transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: #1e2b45;
+  border-radius: 4px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@layer components {
+  /* Panel estándar del dashboard */
+  .panel {
+    @apply bg-term-panel border border-term-border rounded-lg;
+  }
+  /* Inputs del terminal */
+  .input {
+    @apply bg-term-panel2 border border-term-border rounded-md px-3 py-2 text-sm
+           text-term-text placeholder-term-muted outline-none w-full
+           focus:border-term-accent transition-colors;
+  }
+  .label {
+    @apply block text-xs font-medium text-term-dim mb-1 uppercase tracking-wider;
+  }
+  /* Botones */
+  .btn {
+    @apply inline-flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium
+           transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .btn-primary {
+    @apply btn bg-term-accent text-white hover:bg-blue-500;
+  }
+  .btn-ghost {
+    @apply btn border border-term-border text-term-dim hover:text-term-text hover:border-term-muted;
+  }
+  .btn-danger {
+    @apply btn bg-term-bad text-white hover:bg-red-600;
+  }
+  .btn-success {
+    @apply btn bg-term-good text-white hover:bg-green-600;
+  }
+  /* Celdas de tabla densas */
+  .th {
+    @apply px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-term-muted;
+  }
+  .td {
+    @apply px-3 py-2 text-sm text-term-text tabular;
+  }
+}

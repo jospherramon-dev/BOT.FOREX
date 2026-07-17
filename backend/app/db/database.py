@@ -54,3 +54,24 @@ def init_db() -> None:
     from app.db import models  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
+    _apply_micro_migrations()
+
+
+def _apply_micro_migrations() -> None:
+    """
+    Añade columnas nuevas a tablas ya existentes (create_all no altera
+    tablas). Cada sentencia es idempotente: si la columna ya existe, el
+    ALTER falla y se ignora. Para migraciones serias, usar Alembic.
+    """
+    from sqlalchemy import text
+
+    statements = [
+        "ALTER TABLE bot_configs ADD COLUMN strategy_params_json TEXT DEFAULT '{}'",
+    ]
+    with engine.connect() as conn:
+        for stmt in statements:
+            try:
+                conn.execute(text(stmt))
+                conn.commit()
+            except Exception:  # noqa: BLE001 — columna ya existente
+                conn.rollback()

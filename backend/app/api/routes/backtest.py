@@ -9,6 +9,7 @@ GET    /backtest/runs                : historial de simulaciones.
 GET    /backtest/runs/{run_id}       : detalle (incluye curva de equity).
 """
 
+import asyncio
 import json
 import logging
 import re
@@ -25,6 +26,7 @@ from app.backtesting.data_loader import (
     load_csv,
     user_dataset_dir,
 )
+from app.backtesting import optimizer
 from app.backtesting.metrics import compute_metrics, downsample_equity
 from app.db.models import BacktestRun
 from app.schemas.backtest import (
@@ -32,8 +34,10 @@ from app.schemas.backtest import (
     BacktestResultOut,
     BacktestRunSummary,
     DatasetInfo,
+    OptimizationRequest,
+    OptimizationStarted,
 )
-from app.strategies import STRATEGY_REGISTRY
+from app.strategies import STRATEGY_REGISTRY, get_strategy
 
 logger = logging.getLogger(__name__)
 
@@ -207,6 +211,124 @@ async def run_backtest(
         equity_curve=equity_curve,
         trades=[t.to_dict() for t in result.trades],
     )
+
+
+# ---------------------------------------------------------------------------
+# Optimización de parámetros (grid search en segundo plano)
+# ---------------------------------------------------------------------------
+@router.post("/optimize", response_model=OptimizationStarted)
+async def start_optimization(
+    payload: OptimizationRequest, current_user: CurrentUser
+) -> OptimizationStarted:
+    """
+    Lanza un barrido de parámetros. Devuelve un `job_id` para consultar el
+    progreso con GET /backtest/optimize/{job_id}; la tabla del dashboard se
+    va rellenando a medida que terminan combinaciones.
+    """
+    if payload.strategy_name not in STRATEGY_REGISTRY:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Estrategia desconocida. Disponibles: {sorted(STRATEGY_REGISTRY)}",
+        )
+    if optimizer.user_has_running_job(current_user.id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Ya hay una optimización en curso; espere a que termine.",
+        )
+
+    path = _safe_dataset_path(current_user.id, payload.dataset)
+    if not path.exists():
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Dataset no encontrado")
+
+    base_risk = {
+        "stop_loss_pips": payload.stop_loss_pips,
+        "take_profit_pips": payload.take_profit_pips,
+        "break_even_trigger_pips": payload.break_even_trigger_pips,
+    }
+    try:
+        combos = optimizer.build_combos(
+            payload.strategy_name,
+            base_risk,
+            payload.stop_loss_grid,
+            payload.take_profit_grid,
+            payload.break_even_grid,
+            payload.strategy_param_grid,
+        )
+        df = await run_in_threadpool(load_csv, path)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+
+    if payload.date_from is not None:
+        df = df[df.index >= payload.date_from.replace(tzinfo=None)]
+    if payload.date_to is not None:
+        df = df[df.index <= payload.date_to.replace(tzinfo=None)]
+
+    # ── Split cronológico in-sample / out-of-sample ─────────────────────
+    df_valid = None
+    if payload.validation_split > 0:
+        split_at = int(len(df) * (1 - payload.validation_split))
+        min_bars = get_strategy(payload.strategy_name).min_bars
+        if split_at <= min_bars * 2 or len(df) - split_at <= min_bars * 2:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"Dataset demasiado pequeño para reservar el "
+                    f"{payload.validation_split:.0%} como validación: cada tramo "
+                    f"necesita más de {min_bars * 2} velas. Use un dataset mayor "
+                    f"o validation_split=0."
+                ),
+            )
+        df, df_valid = df.iloc[:split_at], df.iloc[split_at:]
+
+    base_params = BacktestParams(
+        symbol=payload.symbol,
+        timeframe=payload.timeframe,
+        initial_balance=payload.initial_balance,
+        spread_pips=payload.spread_pips,
+        strategy_name=payload.strategy_name,
+        risk_per_trade_pct=payload.risk_per_trade_pct,
+        stop_loss_pips=payload.stop_loss_pips,
+        take_profit_pips=payload.take_profit_pips,
+        break_even_enabled=payload.break_even_enabled,
+        break_even_trigger_pips=payload.break_even_trigger_pips,
+        trailing_stop_enabled=payload.trailing_stop_enabled,
+        trailing_stop_pips=payload.trailing_stop_pips,
+    )
+
+    job = optimizer.create_job(
+        current_user.id,
+        payload.strategy_name,
+        payload.symbol,
+        payload.timeframe,
+        len(combos),
+        validation_split=payload.validation_split,
+        train_rows=len(df),
+        valid_rows=len(df_valid) if df_valid is not None else 0,
+        train_end=df.index[-1].isoformat() if len(df) else None,
+    )
+    # El barrido corre en el threadpool sin bloquear el event-loop; el
+    # cliente sigue el progreso por polling del job.
+    asyncio.get_running_loop().run_in_executor(
+        None, optimizer.run_job, job, df, base_params, combos, df_valid
+    )
+    logger.info(
+        "Optimización %s lanzada: %s combinaciones de %s en %s",
+        job.id, len(combos), payload.strategy_name, payload.dataset,
+    )
+    return OptimizationStarted(job_id=job.id, total_combinations=len(combos))
+
+
+@router.get("/optimize/{job_id}")
+def optimization_status(job_id: str, current_user: CurrentUser) -> dict:
+    """Progreso y resultados (ordenados por P/L neto) de un barrido."""
+    job = optimizer.get_job(job_id)
+    if job is None or job.user_id != current_user.id:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, detail="Optimización no encontrada"
+        )
+    return job.snapshot()
 
 
 # ---------------------------------------------------------------------------

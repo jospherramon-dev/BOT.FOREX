@@ -43,6 +43,7 @@ const parseList = (text) =>
  */
 function OptimizationPanel({ form, strategies }) {
   const [grids, setGrids] = useState({ sl: '', tp: '', be: '' });
+  const [validSplit, setValidSplit] = useState('30');
   const [paramGrids, setParamGrids] = useState({});
   const [job, setJob] = useState(null);
   const [error, setError] = useState('');
@@ -98,6 +99,7 @@ function OptimizationPanel({ form, strategies }) {
         take_profit_grid: parseList(grids.tp),
         break_even_grid: parseList(grids.be),
         strategy_param_grid,
+        validation_split: Math.min(Math.max((parseFloat(validSplit) || 0) / 100, 0), 0.5),
       };
       const { job_id, total_combinations } = await api.post('/backtest/optimize', payload);
       setJob({ job_id, status: 'running', completed: 0, total: total_combinations, results: [] });
@@ -130,6 +132,7 @@ function OptimizationPanel({ form, strategies }) {
     : [];
   const running = job?.status === 'running';
   const progressPct = job?.total ? Math.round((job.completed / job.total) * 100) : 0;
+  const hasValidation = job?.results?.some((r) => r.validation != null);
 
   return (
     <Panel
@@ -144,7 +147,10 @@ function OptimizationPanel({ form, strategies }) {
     >
       <p className="text-xs text-term-muted mb-3">
         Liste los valores a probar separados por comas (vacío = usar el valor del formulario
-        superior). Usa el dataset, spread y estrategia seleccionados arriba.
+        superior). Usa el dataset, spread y estrategia seleccionados arriba. El % de
+        validación reserva el tramo FINAL del histórico como out-of-sample: cada combinación
+        se simula también ahí, fuera del barrido — si gana en optimización pero pierde en
+        validación, está sobreajustada.
       </p>
 
       <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
@@ -162,6 +168,11 @@ function OptimizationPanel({ form, strategies }) {
           <label className="label">BE trigger (pips)</label>
           <input className="input" placeholder="6, 8, 10" value={grids.be}
                  onChange={(e) => setGrids({ ...grids, be: e.target.value })} />
+        </div>
+        <div>
+          <label className="label">Validación % (OOS)</label>
+          <input className="input" type="number" min="0" max="50" placeholder="30 (0 = off)"
+                 value={validSplit} onChange={(e) => setValidSplit(e.target.value)} />
         </div>
         {numericParams.map(([name, def]) => (
           <div key={name}>
@@ -192,6 +203,15 @@ function OptimizationPanel({ form, strategies }) {
         )}
       </div>
 
+      {/* Detalle del split cronológico in-sample / out-of-sample */}
+      {job?.valid_rows > 0 && (
+        <p className="mt-3 text-xs text-term-dim tabular">
+          Optimización: {job.train_rows?.toLocaleString('es')} velas (hasta{' '}
+          {job.train_end?.slice(0, 16).replace('T', ' ')}) · Validación OOS:{' '}
+          {job.valid_rows?.toLocaleString('es')} velas posteriores, nunca vistas por el barrido.
+        </p>
+      )}
+
       {/* Barra de progreso del barrido */}
       {job && (
         <div className="mt-4 h-1.5 rounded-full bg-term-panel2 overflow-hidden">
@@ -221,7 +241,9 @@ function OptimizationPanel({ form, strategies }) {
                 <th className="th text-right">Trades</th>
                 <th className="th text-right">Win rate</th>
                 <th className="th text-right">PF</th>
-                <th className="th text-right">P/L</th>
+                <th className="th text-right">P/L optim.</th>
+                {hasValidation && <th className="th text-right">P/L valid.</th>}
+                {hasValidation && <th className="th text-right">PF valid.</th>}
                 <th className="th text-right">DD%</th>
                 <th className="th text-right">Sharpe</th>
                 <th className="th" />
@@ -248,6 +270,22 @@ function OptimizationPanel({ form, strategies }) {
                   <td className={`td text-right font-medium ${r.metrics.net_profit >= 0 ? 'text-term-good' : 'text-term-bad'}`}>
                     {signed(r.metrics.net_profit)}
                   </td>
+                  {hasValidation && (
+                    <td
+                      className={`td text-right font-medium ${
+                        (r.validation?.net_profit ?? 0) >= 0 ? 'text-term-good' : 'text-term-bad'
+                      }`}
+                      title="P/L en el tramo de validación (nunca visto por el barrido)"
+                    >
+                      {r.validation ? signed(r.validation.net_profit) : '—'}
+                      {r.metrics.net_profit > 0 && (r.validation?.net_profit ?? 0) < 0 && ' ⚠'}
+                    </td>
+                  )}
+                  {hasValidation && (
+                    <td className="td text-right">
+                      {r.validation ? r.validation.profit_factor : '—'}
+                    </td>
+                  )}
                   <td className="td text-right">{r.metrics.max_drawdown_pct}%</td>
                   <td className="td text-right">{r.metrics.sharpe_ratio}</td>
                   <td className="td text-right">

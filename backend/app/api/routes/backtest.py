@@ -37,7 +37,7 @@ from app.schemas.backtest import (
     OptimizationRequest,
     OptimizationStarted,
 )
-from app.strategies import STRATEGY_REGISTRY
+from app.strategies import STRATEGY_REGISTRY, get_strategy
 
 logger = logging.getLogger(__name__)
 
@@ -265,6 +265,23 @@ async def start_optimization(
     if payload.date_to is not None:
         df = df[df.index <= payload.date_to.replace(tzinfo=None)]
 
+    # ── Split cronológico in-sample / out-of-sample ─────────────────────
+    df_valid = None
+    if payload.validation_split > 0:
+        split_at = int(len(df) * (1 - payload.validation_split))
+        min_bars = get_strategy(payload.strategy_name).min_bars
+        if split_at <= min_bars * 2 or len(df) - split_at <= min_bars * 2:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"Dataset demasiado pequeño para reservar el "
+                    f"{payload.validation_split:.0%} como validación: cada tramo "
+                    f"necesita más de {min_bars * 2} velas. Use un dataset mayor "
+                    f"o validation_split=0."
+                ),
+            )
+        df, df_valid = df.iloc[:split_at], df.iloc[split_at:]
+
     base_params = BacktestParams(
         symbol=payload.symbol,
         timeframe=payload.timeframe,
@@ -281,13 +298,20 @@ async def start_optimization(
     )
 
     job = optimizer.create_job(
-        current_user.id, payload.strategy_name, payload.symbol,
-        payload.timeframe, len(combos),
+        current_user.id,
+        payload.strategy_name,
+        payload.symbol,
+        payload.timeframe,
+        len(combos),
+        validation_split=payload.validation_split,
+        train_rows=len(df),
+        valid_rows=len(df_valid) if df_valid is not None else 0,
+        train_end=df.index[-1].isoformat() if len(df) else None,
     )
     # El barrido corre en el threadpool sin bloquear el event-loop; el
     # cliente sigue el progreso por polling del job.
     asyncio.get_running_loop().run_in_executor(
-        None, optimizer.run_job, job, df, base_params, combos
+        None, optimizer.run_job, job, df, base_params, combos, df_valid
     )
     logger.info(
         "Optimización %s lanzada: %s combinaciones de %s en %s",

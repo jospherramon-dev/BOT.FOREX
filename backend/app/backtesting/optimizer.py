@@ -9,10 +9,14 @@ El trabajo corre en segundo plano (threadpool) y expone su progreso, de
 modo que el dashboard lo muestra "corriendo en automático" y va rellenando
 la tabla a medida que terminan combinaciones.
 
-Advertencia metodológica (sobreajuste): el mejor resultado de un barrido
-está, por definición, ajustado al pasado. Antes de operar en real, valide
-la combinación ganadora sobre un periodo distinto al del barrido
-(out-of-sample) y en cuenta demo.
+Validación out-of-sample (antídoto contra el sobreajuste)
+---------------------------------------------------------
+Si `validation_split > 0`, el dataset se divide CRONOLÓGICAMENTE: el primer
+tramo se usa para el barrido (in-sample) y el tramo final, que el barrido
+nunca "ve" al elegir parámetros, se simula aparte con cada combinación
+(out-of-sample). La tabla muestra ambos resultados: una combinación
+ganadora in-sample que se derrumba en validación está sobreajustada y debe
+descartarse. Aun así, valide la ganadora en cuenta demo antes de operar.
 """
 
 from __future__ import annotations
@@ -53,10 +57,19 @@ class OptimizationJob:
     error: str = ""
     results: list[dict] = field(default_factory=list)
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    # Metadatos del split out-of-sample (0/None = validación desactivada).
+    validation_split: float = 0.0
+    train_rows: int = 0
+    valid_rows: int = 0
+    train_end: str | None = None     # timestamp donde termina el tramo in-sample
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def snapshot(self) -> dict:
-        """Vista JSON-serializable, con resultados ordenados por P/L neto."""
+        """
+        Vista JSON-serializable. Los resultados se ordenan por P/L neto del
+        tramo de OPTIMIZACIÓN (la selección siempre es in-sample; la columna
+        de validación existe para juzgarla, no para elegir con ella).
+        """
         with self._lock:
             results = sorted(
                 self.results,
@@ -73,6 +86,10 @@ class OptimizationJob:
                 "total": self.total,
                 "completed": self.completed,
                 "created_at": self.created_at.isoformat(),
+                "validation_split": self.validation_split,
+                "train_rows": self.train_rows,
+                "valid_rows": self.valid_rows,
+                "train_end": self.train_end,
                 "results": results,
             }
 
@@ -139,13 +156,29 @@ def build_combos(
 # ---------------------------------------------------------------------------
 # Ejecución del barrido (síncrona; el route la manda al threadpool)
 # ---------------------------------------------------------------------------
+def _simulate(df: pd.DataFrame, params: BacktestParams) -> dict:
+    """Un backtest → métricas agregadas (sin curva, para aligerar la tabla)."""
+    result = Backtester(df, params).run()
+    return compute_metrics(
+        [t.to_dict() for t in result.trades],
+        [p["equity"] for p in result.equity_curve] or [params.initial_balance],
+        params.initial_balance,
+        params.timeframe,
+    )
+
+
 def run_job(
     job: OptimizationJob,
-    df: pd.DataFrame,
+    df_train: pd.DataFrame,
     base: BacktestParams,
     combos: list[dict],
+    df_valid: pd.DataFrame | None = None,
 ) -> None:
-    """Corre cada combinación y acumula sus métricas en el job."""
+    """
+    Corre cada combinación sobre el tramo de optimización y, si hay split,
+    también sobre el tramo de validación out-of-sample (que jamás participa
+    en la elección de parámetros).
+    """
     try:
         for combo in combos:
             params = BacktestParams(
@@ -163,16 +196,12 @@ def run_job(
                 trailing_stop_enabled=base.trailing_stop_enabled,
                 trailing_stop_pips=base.trailing_stop_pips,
             )
-            result = Backtester(df, params).run()
-            metrics = compute_metrics(
-                [t.to_dict() for t in result.trades],
-                [p["equity"] for p in result.equity_curve]
-                or [base.initial_balance],
-                base.initial_balance,
-                base.timeframe,
-            )
+            metrics = _simulate(df_train, params)
+            validation = _simulate(df_valid, params) if df_valid is not None else None
             with job._lock:
-                job.results.append({**combo, "metrics": metrics})
+                job.results.append(
+                    {**combo, "metrics": metrics, "validation": validation}
+                )
                 job.completed += 1
 
         job.status = "done"
@@ -190,7 +219,15 @@ def run_job(
 # Registro de trabajos
 # ---------------------------------------------------------------------------
 def create_job(
-    user_id: int, strategy_name: str, symbol: str, timeframe: str, total: int
+    user_id: int,
+    strategy_name: str,
+    symbol: str,
+    timeframe: str,
+    total: int,
+    validation_split: float = 0.0,
+    train_rows: int = 0,
+    valid_rows: int = 0,
+    train_end: str | None = None,
 ) -> OptimizationJob:
     """Registra un job nuevo, expulsando los más antiguos del usuario."""
     job = OptimizationJob(
@@ -200,6 +237,10 @@ def create_job(
         symbol=symbol,
         timeframe=timeframe,
         total=total,
+        validation_split=validation_split,
+        train_rows=train_rows,
+        valid_rows=valid_rows,
+        train_end=train_end,
     )
     user_jobs = sorted(
         (j for j in _JOBS.values() if j.user_id == user_id),

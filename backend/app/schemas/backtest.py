@@ -72,6 +72,11 @@ class OptimizationRequest(BaseModel):
     break_even_grid: list[float] = Field(default_factory=list)
     strategy_param_grid: dict[str, list] = Field(default_factory=dict)
 
+    # Validación out-of-sample: fracción FINAL del dataset (cronológica)
+    # reservada para validar cada combinación fuera del barrido.
+    # 0 = desactivada. Por defecto 30%.
+    validation_split: float = Field(default=0.3, ge=0, le=0.5)
+
 
 class OptimizationStarted(BaseModel):
     job_id: str

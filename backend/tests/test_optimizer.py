@@ -104,6 +104,56 @@ def test_barrido_completo_ordena_por_beneficio():
     assert "win_rate" in best["metrics"]
 
 
+def test_barrido_sin_validacion_no_incluye_columna():
+    closes = [1.1000] * 6 + list(np.linspace(1.1005, 1.1100, 30))
+    df = _df_from_closes(closes)
+    base = BacktestParams(
+        symbol="EURUSD", timeframe="M15", initial_balance=10_000,
+        spread_pips=0.0, strategy_name="test_buy_once",
+        break_even_enabled=False,
+    )
+    combos = build_combos("test_buy_once", BASE_RISK, [30], [40], [], {})
+    job = create_job(2, "test_buy_once", "EURUSD", "M15", len(combos))
+    run_job(job, df, base, combos)  # sin df_valid
+
+    row = job.snapshot()["results"][0]
+    assert row["validation"] is None
+
+
+def test_validacion_out_of_sample_simula_ambos_tramos():
+    # Tramo de optimización: subida sostenida (el BUY gana por TP).
+    # Tramo de validación: caída sostenida (el mismo BUY pierde por SL).
+    # La validación debe delatar que el resultado no generaliza.
+    train_closes = [1.1000] * 6 + list(np.linspace(1.1005, 1.1100, 30))
+    valid_closes = [1.1000] * 6 + list(np.linspace(1.0995, 1.0900, 30))
+    df_train = _df_from_closes(train_closes)
+    df_valid = _df_from_closes(valid_closes)
+
+    base = BacktestParams(
+        symbol="EURUSD", timeframe="M15", initial_balance=10_000,
+        spread_pips=0.0, strategy_name="test_buy_once",
+        break_even_enabled=False,
+    )
+    combos = build_combos("test_buy_once", BASE_RISK, [30], [40, 80], [], {})
+    job = create_job(
+        3, "test_buy_once", "EURUSD", "M15", len(combos),
+        validation_split=0.5, train_rows=len(df_train),
+        valid_rows=len(df_valid), train_end=str(df_train.index[-1]),
+    )
+    run_job(job, df_train, base, combos, df_valid)
+
+    snapshot = job.snapshot()
+    assert snapshot["validation_split"] == 0.5
+    assert snapshot["valid_rows"] == len(df_valid)
+
+    for row in snapshot["results"]:
+        assert row["validation"] is not None
+        assert "net_profit" in row["validation"]
+        # In-sample gana; out-of-sample pierde → sobreajuste visible.
+        assert row["metrics"]["net_profit"] > 0
+        assert row["validation"]["net_profit"] < 0
+
+
 def test_registro_de_jobs_por_usuario():
     job = create_job(99, "ma_rsi_crossover", "EURUSD", "M15", total=1)
     assert get_job(job.id) is job

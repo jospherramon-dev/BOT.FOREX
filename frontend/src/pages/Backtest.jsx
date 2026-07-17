@@ -6,7 +6,7 @@
  * - Historial de simulaciones anteriores.
  */
 
-import { FileUp, Loader2, Play, Trash2 } from 'lucide-react';
+import { CheckCircle2, FileUp, Loader2, Play, SlidersHorizontal, Trash2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import {
   Area,
@@ -27,6 +27,247 @@ import StatCard from '../components/StatCard';
 const fmt = (n) =>
   n == null ? '—' : Number(n).toLocaleString('es', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const signed = (n) => `${n >= 0 ? '+' : ''}${fmt(n)}`;
+
+/** "10, 12,15" → [10, 12, 15] (ignora entradas no numéricas). */
+const parseList = (text) =>
+  String(text ?? '')
+    .split(',')
+    .map((s) => parseFloat(s.trim()))
+    .filter((n) => Number.isFinite(n));
+
+/**
+ * Panel de optimización: define listas de valores para SL/TP/break-even y
+ * parámetros de la estrategia (p. ej. umbrales de RSI), lanza el barrido en
+ * el backend y va rellenando la tabla comparativa con el progreso en vivo.
+ * Cada fila puede aplicarse al bot con un clic.
+ */
+function OptimizationPanel({ form, strategies }) {
+  const [grids, setGrids] = useState({ sl: '', tp: '', be: '' });
+  const [paramGrids, setParamGrids] = useState({});
+  const [job, setJob] = useState(null);
+  const [error, setError] = useState('');
+  const [applied, setApplied] = useState(null);
+  const pollRef = useRef(null);
+
+  const strategy = strategies.find((s) => s.name === form.strategy_name);
+  const numericParams = Object.entries(strategy?.default_params ?? {}).filter(
+    ([, v]) => typeof v === 'number',
+  );
+
+  // Detiene el polling al desmontar la página.
+  useEffect(() => () => clearInterval(pollRef.current), []);
+
+  const poll = (jobId) => {
+    clearInterval(pollRef.current);
+    pollRef.current = setInterval(async () => {
+      try {
+        const snapshot = await api.get(`/backtest/optimize/${jobId}`);
+        setJob(snapshot);
+        if (snapshot.status !== 'running') clearInterval(pollRef.current);
+      } catch {
+        clearInterval(pollRef.current);
+      }
+    }, 2000);
+  };
+
+  const start = async () => {
+    setError('');
+    setApplied(null);
+    setJob(null);
+    try {
+      const strategy_param_grid = {};
+      for (const [name, text] of Object.entries(paramGrids)) {
+        const values = parseList(text);
+        if (values.length > 0) strategy_param_grid[name] = values;
+      }
+      const payload = {
+        dataset: form.dataset,
+        symbol: form.symbol,
+        timeframe: form.timeframe,
+        initial_balance: +form.initial_balance,
+        spread_pips: +form.spread_pips,
+        strategy_name: form.strategy_name,
+        risk_per_trade_pct: +form.risk_per_trade_pct,
+        stop_loss_pips: +form.stop_loss_pips,
+        take_profit_pips: +form.take_profit_pips,
+        break_even_enabled: form.break_even_enabled,
+        break_even_trigger_pips: +form.break_even_trigger_pips,
+        trailing_stop_enabled: form.trailing_stop_enabled,
+        trailing_stop_pips: +form.trailing_stop_pips,
+        stop_loss_grid: parseList(grids.sl),
+        take_profit_grid: parseList(grids.tp),
+        break_even_grid: parseList(grids.be),
+        strategy_param_grid,
+      };
+      const { job_id, total_combinations } = await api.post('/backtest/optimize', payload);
+      setJob({ job_id, status: 'running', completed: 0, total: total_combinations, results: [] });
+      poll(job_id);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  /** Escribe la fila elegida en la configuración del bot (aplica en caliente). */
+  const applyToBot = async (row) => {
+    try {
+      const current = await api.get('/bot/config');
+      await api.put('/bot/config', {
+        ...current,
+        strategy_name: form.strategy_name,
+        strategy_params: { ...current.strategy_params, ...row.strategy_params },
+        stop_loss_pips: row.stop_loss_pips,
+        take_profit_pips: row.take_profit_pips,
+        break_even_trigger_pips: row.break_even_trigger_pips,
+      });
+      setApplied(row);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const sweptParams = job?.results?.length
+    ? Object.keys(job.results[0].strategy_params ?? {})
+    : [];
+  const running = job?.status === 'running';
+  const progressPct = job?.total ? Math.round((job.completed / job.total) * 100) : 0;
+
+  return (
+    <Panel
+      title="Optimización de parámetros (grid search)"
+      actions={
+        running && (
+          <span className="text-xs text-term-dim tabular">
+            {job.completed}/{job.total} combinaciones
+          </span>
+        )
+      }
+    >
+      <p className="text-xs text-term-muted mb-3">
+        Liste los valores a probar separados por comas (vacío = usar el valor del formulario
+        superior). Usa el dataset, spread y estrategia seleccionados arriba.
+      </p>
+
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
+        <div>
+          <label className="label">SL (pips)</label>
+          <input className="input" placeholder="10, 12, 15" value={grids.sl}
+                 onChange={(e) => setGrids({ ...grids, sl: e.target.value })} />
+        </div>
+        <div>
+          <label className="label">TP (pips)</label>
+          <input className="input" placeholder="15, 18, 24" value={grids.tp}
+                 onChange={(e) => setGrids({ ...grids, tp: e.target.value })} />
+        </div>
+        <div>
+          <label className="label">BE trigger (pips)</label>
+          <input className="input" placeholder="6, 8, 10" value={grids.be}
+                 onChange={(e) => setGrids({ ...grids, be: e.target.value })} />
+        </div>
+        {numericParams.map(([name, def]) => (
+          <div key={name}>
+            <label className="label">{name}</label>
+            <input
+              className="input"
+              placeholder={`${def} (fijo)`}
+              value={paramGrids[name] ?? ''}
+              onChange={(e) => setParamGrids({ ...paramGrids, [name]: e.target.value })}
+            />
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-4 flex items-center gap-3 flex-wrap">
+        <button onClick={start} disabled={running || !form.dataset} className="btn-primary">
+          {running ? <Loader2 className="w-4 h-4 animate-spin" /> : <SlidersHorizontal className="w-4 h-4" />}
+          {running ? 'Optimizando…' : 'Iniciar optimización'}
+        </button>
+        {!form.dataset && <span className="text-xs text-term-muted">Seleccione un dataset</span>}
+        {error && <span className="text-sm text-term-bad">{error}</span>}
+        {applied && (
+          <span className="flex items-center gap-1.5 text-sm text-term-good">
+            <CheckCircle2 className="w-4 h-4" />
+            Aplicado al bot: SL {applied.stop_loss_pips} / TP {applied.take_profit_pips} — el
+            motor lo usa en el próximo ciclo y gestionará el SL automáticamente.
+          </span>
+        )}
+      </div>
+
+      {/* Barra de progreso del barrido */}
+      {job && (
+        <div className="mt-4 h-1.5 rounded-full bg-term-panel2 overflow-hidden">
+          <div
+            className={`h-full transition-all ${job.status === 'error' ? 'bg-term-bad' : 'bg-term-accent'}`}
+            style={{ width: `${progressPct}%` }}
+          />
+        </div>
+      )}
+      {job?.status === 'error' && (
+        <p className="mt-2 text-sm text-term-bad">Barrido fallido: {job.error}</p>
+      )}
+
+      {/* Tabla comparativa (ordenada por P/L neto) */}
+      {job?.results?.length > 0 && (
+        <div className="mt-4 overflow-x-auto max-h-96 overflow-y-auto border border-term-border rounded-md">
+          <table className="w-full">
+            <thead className="border-b border-term-border sticky top-0 bg-term-panel">
+              <tr>
+                <th className="th">#</th>
+                <th className="th text-right">SL</th>
+                <th className="th text-right">TP</th>
+                <th className="th text-right">BE</th>
+                {sweptParams.map((p) => (
+                  <th key={p} className="th text-right">{p}</th>
+                ))}
+                <th className="th text-right">Trades</th>
+                <th className="th text-right">Win rate</th>
+                <th className="th text-right">PF</th>
+                <th className="th text-right">P/L</th>
+                <th className="th text-right">DD%</th>
+                <th className="th text-right">Sharpe</th>
+                <th className="th" />
+              </tr>
+            </thead>
+            <tbody>
+              {job.results.map((r, i) => (
+                <tr
+                  key={i}
+                  className={`border-b border-term-border/50 hover:bg-term-panel2 ${
+                    i === 0 ? 'bg-term-good/5' : ''
+                  }`}
+                >
+                  <td className="td text-term-muted">{i + 1}{i === 0 && ' 🏆'}</td>
+                  <td className="td text-right">{r.stop_loss_pips}</td>
+                  <td className="td text-right">{r.take_profit_pips}</td>
+                  <td className="td text-right">{r.break_even_trigger_pips}</td>
+                  {sweptParams.map((p) => (
+                    <td key={p} className="td text-right">{r.strategy_params?.[p]}</td>
+                  ))}
+                  <td className="td text-right">{r.metrics.total_trades}</td>
+                  <td className="td text-right">{r.metrics.win_rate}%</td>
+                  <td className="td text-right">{r.metrics.profit_factor}</td>
+                  <td className={`td text-right font-medium ${r.metrics.net_profit >= 0 ? 'text-term-good' : 'text-term-bad'}`}>
+                    {signed(r.metrics.net_profit)}
+                  </td>
+                  <td className="td text-right">{r.metrics.max_drawdown_pct}%</td>
+                  <td className="td text-right">{r.metrics.sharpe_ratio}</td>
+                  <td className="td text-right">
+                    <button
+                      onClick={() => applyToBot(r)}
+                      className="btn-ghost !px-2 !py-1 text-xs"
+                      title="Escribir estos parámetros en la configuración del bot"
+                    >
+                      Aplicar al bot
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Panel>
+  );
+}
 
 const DEFAULT_FORM = {
   dataset: '',
@@ -337,6 +578,9 @@ export default function Backtest() {
           </Panel>
         </>
       )}
+
+      {/* ── Optimización de parámetros ──────────────────────────── */}
+      <OptimizationPanel form={form} strategies={strategies} />
 
       {/* ── Historial de simulaciones ───────────────────────────── */}
       <Panel title="Simulaciones anteriores">

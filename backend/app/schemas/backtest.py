@@ -39,6 +39,45 @@ class BacktestRequest(BaseModel):
     trailing_stop_pips: float = Field(default=15.0, gt=0)
 
 
+class OptimizationRequest(BaseModel):
+    """
+    Barrido de parámetros sobre un dataset. Cada `*_grid` es la lista de
+    valores a probar en ese eje; una lista vacía deja el eje fijo en su
+    valor base. `strategy_param_grid` barre parámetros de la estrategia
+    (p. ej. {"rsi_oversold": [20, 25, 30]}).
+    """
+
+    dataset: str
+    symbol: str = Field(min_length=6, max_length=12, pattern=r"^[A-Z]{6,12}$")
+    timeframe: str = Field(default="M15", pattern=r"^(M1|M5|M15|M30|H1|H4|D1)$")
+    date_from: datetime | None = None
+    date_to: datetime | None = None
+
+    initial_balance: float = Field(default=10_000, gt=0)
+    spread_pips: float = Field(default=1.0, ge=0)
+    strategy_name: str = "ma_rsi_crossover"
+
+    # Valores base (se usan en los ejes sin barrido).
+    risk_per_trade_pct: float = Field(default=1.0, gt=0, le=10)
+    stop_loss_pips: float = Field(default=30.0, gt=0)
+    take_profit_pips: float = Field(default=60.0, gt=0)
+    break_even_enabled: bool = True
+    break_even_trigger_pips: float = Field(default=20.0, gt=0)
+    trailing_stop_enabled: bool = False
+    trailing_stop_pips: float = Field(default=15.0, gt=0)
+
+    # Ejes de barrido.
+    stop_loss_grid: list[float] = Field(default_factory=list)
+    take_profit_grid: list[float] = Field(default_factory=list)
+    break_even_grid: list[float] = Field(default_factory=list)
+    strategy_param_grid: dict[str, list] = Field(default_factory=dict)
+
+
+class OptimizationStarted(BaseModel):
+    job_id: str
+    total_combinations: int
+
+
 class BacktestRunSummary(BaseModel):
     """Fila del historial de backtests."""
 

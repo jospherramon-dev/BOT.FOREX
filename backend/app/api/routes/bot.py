@@ -12,6 +12,7 @@ GET  /bot/trades/history     : historial paginado de operaciones cerradas.
 """
 
 import asyncio
+import json
 import logging
 from datetime import datetime, timezone
 
@@ -64,7 +65,10 @@ def update_config(
             detail=f"Estrategia desconocida. Disponibles: {sorted(STRATEGY_REGISTRY)}",
         )
     config = _get_config(db, current_user.id)
-    for field, value in payload.model_dump().items():
+    data = payload.model_dump()
+    # strategy_params se persiste serializado (columna strategy_params_json).
+    config.strategy_params_json = json.dumps(data.pop("strategy_params"))
+    for field, value in data.items():
         setattr(config, field, value)
     db.commit()
     db.refresh(config)

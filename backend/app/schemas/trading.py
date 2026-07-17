@@ -32,6 +32,9 @@ class BotConfigIn(BaseModel):
     """Parámetros de riesgo editables desde el dashboard (Módulo B)."""
 
     strategy_name: str = "ma_rsi_crossover"
+    # Sobreescrituras de parámetros de la estrategia (p. ej. desde el
+    # optimizador). Vacío = usar los defaults de la estrategia.
+    strategy_params: dict = Field(default_factory=dict)
     risk_per_trade_pct: float = Field(default=1.0, gt=0, le=10)
     stop_loss_pips: float = Field(default=30.0, gt=0)
     take_profit_pips: float = Field(default=60.0, gt=0)

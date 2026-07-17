@@ -144,6 +144,9 @@ class BotConfig(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), unique=True)
 
     strategy_name: Mapped[str] = mapped_column(String(60), default="ma_rsi_crossover")
+    # Sobreescrituras de parámetros de la estrategia (JSON), p. ej. umbrales
+    # de RSI aplicados desde el optimizador. Vacío = defaults de la estrategia.
+    strategy_params_json: Mapped[str] = mapped_column(Text, default="{}")
     risk_per_trade_pct: Mapped[float] = mapped_column(Float, default=1.0)   # % de cuenta
     stop_loss_pips: Mapped[float] = mapped_column(Float, default=30.0)
     take_profit_pips: Mapped[float] = mapped_column(Float, default=60.0)
@@ -164,6 +167,16 @@ class BotConfig(Base):
     )
 
     user: Mapped["User"] = relationship(back_populates="config")
+
+    @property
+    def strategy_params(self) -> dict:
+        """Parámetros de estrategia deserializados (para API y motor)."""
+        import json
+
+        try:
+            return json.loads(self.strategy_params_json or "{}")
+        except ValueError:
+            return {}
 
 
 # ---------------------------------------------------------------------------

@@ -270,7 +270,7 @@ class TradingEngine:
     # ------------------------------------------------------------------
     async def _evaluate_asset(self, db, config: BotConfig, asset: Asset) -> bool:
         """Evalúa un activo; devuelve True si abrió una operación."""
-        strategy = get_strategy(config.strategy_name)
+        strategy = get_strategy(config.strategy_name, config.strategy_params)
         tf_minutes = _TIMEFRAME_MINUTES[asset.timeframe]
         date_to = datetime.now(timezone.utc)
         date_from = date_to - timedelta(minutes=tf_minutes * HISTORY_BARS)

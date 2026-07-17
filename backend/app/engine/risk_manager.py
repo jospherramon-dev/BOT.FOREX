@@ -1,0 +1,198 @@
+"""
+Módulo B — Gestión de Riesgo (funciones puras, 100% testeables).
+
+Responsabilidades:
+- Convertir pips ↔ precio y calcular SL/TP absolutos.
+- Tamaño de lote dinámico según el % de riesgo de la cuenta.
+- Decidir movimientos de SL: break-even y trailing stop.
+- Clasificar el motivo de cierre de una posición (SL / TP / manual).
+
+Ninguna función toca la base de datos ni el broker: reciben valores y
+devuelven decisiones. El motor (trading_engine.py) las ejecuta, y el
+backtester (Módulo C) reutilizará exactamente las mismas.
+"""
+
+from __future__ import annotations
+
+import math
+
+from app.db.models import TradeStatus
+
+# Límites de lote estándar de la industria.
+MIN_LOT = 0.01
+MAX_LOT = 100.0
+UNITS_PER_LOT = 100_000  # 1 lote estándar
+
+
+# ---------------------------------------------------------------------------
+# Conversiones pips ↔ precio
+# ---------------------------------------------------------------------------
+def pips_to_price_delta(pips: float, pip_size: float) -> float:
+    """Convierte una distancia en pips a distancia en precio."""
+    return pips * pip_size
+
+
+def price_delta_to_pips(delta: float, pip_size: float) -> float:
+    """Convierte una distancia en precio a pips."""
+    return delta / pip_size
+
+
+def profit_pips(direction: str, entry_price: float, current_price: float,
+                pip_size: float) -> float:
+    """Pips a favor (positivo) o en contra (negativo) de la posición."""
+    delta = current_price - entry_price
+    if direction.upper() == "SELL":
+        delta = -delta
+    return price_delta_to_pips(delta, pip_size)
+
+
+def calc_sl_tp(
+    direction: str,
+    entry_price: float,
+    stop_loss_pips: float,
+    take_profit_pips: float,
+    pip_size: float,
+) -> tuple[float, float]:
+    """
+    Calcula los precios absolutos de SL y TP a partir de distancias en pips.
+
+    Returns:
+        (stop_loss, take_profit) redondeados a la precisión del pip/10
+        (5 decimales en pares estándar, 3 en pares JPY).
+    """
+    sl_delta = pips_to_price_delta(stop_loss_pips, pip_size)
+    tp_delta = pips_to_price_delta(take_profit_pips, pip_size)
+
+    if direction.upper() == "BUY":
+        sl, tp = entry_price - sl_delta, entry_price + tp_delta
+    else:
+        sl, tp = entry_price + sl_delta, entry_price - tp_delta
+
+    digits = 3 if pip_size == 0.01 else 5
+    return round(sl, digits), round(tp, digits)
+
+
+# ---------------------------------------------------------------------------
+# Tamaño de lote dinámico
+# ---------------------------------------------------------------------------
+def pip_value_per_lot(symbol: str, pip_size: float, price: float,
+                      account_currency: str = "USD") -> float:
+    """
+    Valor monetario de 1 pip por lote estándar, en la divisa de la cuenta.
+
+    - Divisa cotizada == divisa de cuenta (EURUSD con cuenta USD):
+      valor exacto = pip_size × 100.000 (≈ $10/pip).
+    - Divisa base == divisa de cuenta (USDJPY con cuenta USD):
+      se divide por el precio actual.
+    - Cruces (EURGBP con cuenta USD): APROXIMACIÓN dividiendo por el precio;
+      para precisión total habría que consultar el par de conversión.
+    """
+    quote_currency = symbol[3:6]
+    base_currency = symbol[:3]
+
+    if quote_currency == account_currency:
+        return pip_size * UNITS_PER_LOT
+    if base_currency == account_currency:
+        return pip_size * UNITS_PER_LOT / price
+    return pip_size * UNITS_PER_LOT / price  # aproximación para cruces
+
+
+def calc_lot_size(
+    account_balance: float,
+    risk_pct: float,
+    stop_loss_pips: float,
+    pip_value: float,
+) -> float:
+    """
+    Lote tal que, si salta el SL, la pérdida ≈ `risk_pct` % del balance.
+
+        riesgo_monetario = balance × riesgo% / 100
+        lote = riesgo_monetario / (SL_pips × valor_pip_por_lote)
+
+    El resultado se TRUNCA (no redondea) a 2 decimales para nunca exceder
+    el riesgo configurado, y se acota a [MIN_LOT, MAX_LOT].
+    """
+    if stop_loss_pips <= 0 or pip_value <= 0:
+        raise ValueError("SL en pips y valor del pip deben ser positivos")
+
+    risk_amount = account_balance * risk_pct / 100.0
+    raw_lot = risk_amount / (stop_loss_pips * pip_value)
+    lot = math.floor(raw_lot * 100) / 100  # truncar a 2 decimales
+    return max(MIN_LOT, min(MAX_LOT, lot))
+
+
+# ---------------------------------------------------------------------------
+# Break-even y trailing stop
+# ---------------------------------------------------------------------------
+def compute_break_even_sl(
+    direction: str,
+    entry_price: float,
+    current_price: float,
+    pip_size: float,
+    trigger_pips: float,
+    buffer_pips: float = 1.0,
+) -> float | None:
+    """
+    Si la posición lleva ≥ `trigger_pips` a favor, devuelve el nuevo SL en
+    el precio de entrada (+ un pequeño colchón a favor para cubrir spread).
+    Devuelve None si aún no procede.
+    """
+    if profit_pips(direction, entry_price, current_price, pip_size) < trigger_pips:
+        return None
+
+    buffer_delta = pips_to_price_delta(buffer_pips, pip_size)
+    digits = 3 if pip_size == 0.01 else 5
+    if direction.upper() == "BUY":
+        return round(entry_price + buffer_delta, digits)
+    return round(entry_price - buffer_delta, digits)
+
+
+def compute_trailing_sl(
+    direction: str,
+    current_price: float,
+    current_sl: float | None,
+    pip_size: float,
+    trailing_pips: float,
+) -> float | None:
+    """
+    SL dinámico a `trailing_pips` del precio actual. Solo devuelve un valor
+    si MEJORA el SL vigente (el trailing nunca retrocede); None si no aplica.
+    """
+    trail_delta = pips_to_price_delta(trailing_pips, pip_size)
+    digits = 3 if pip_size == 0.01 else 5
+
+    if direction.upper() == "BUY":
+        candidate = round(current_price - trail_delta, digits)
+        if current_sl is None or candidate > current_sl:
+            return candidate
+    else:
+        candidate = round(current_price + trail_delta, digits)
+        if current_sl is None or candidate < current_sl:
+            return candidate
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Clasificación de cierres
+# ---------------------------------------------------------------------------
+def classify_close(
+    direction: str,
+    exit_price: float | None,
+    stop_loss: float | None,
+    take_profit: float | None,
+    pip_size: float,
+    tolerance_pips: float = 3.0,
+) -> TradeStatus:
+    """
+    Deduce el motivo de cierre comparando el precio de salida con SL/TP
+    (con tolerancia por slippage). Si no coincide con ninguno → manual.
+    """
+    if exit_price is None:
+        return TradeStatus.CLOSED_MANUAL
+
+    tolerance = pips_to_price_delta(tolerance_pips, pip_size)
+    if stop_loss is not None and abs(exit_price - stop_loss) <= tolerance:
+        return TradeStatus.CLOSED_SL
+    if take_profit is not None and abs(exit_price - take_profit) <= tolerance:
+        return TradeStatus.CLOSED_TP
+    return TradeStatus.CLOSED_MANUAL

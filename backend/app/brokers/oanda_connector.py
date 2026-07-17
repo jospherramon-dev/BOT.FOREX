@@ -19,6 +19,7 @@ import pandas as pd
 from app.brokers.base import (
     AccountInfo,
     BrokerConnector,
+    ClosedTradeInfo,
     OpenPosition,
     OrderResult,
     TickPrice,
@@ -242,6 +243,20 @@ class OandaConnector(BrokerConnector):
             ticket=ticket,
             executed_price=float(fill["price"]) if fill.get("price") else None,
             message="Posición cerrada",
+        )
+
+    def get_closed_trade_info(self, ticket: str) -> ClosedTradeInfo | None:
+        """Consulta el detalle del trade cerrado (precio medio y PL realizado)."""
+        resp = self._http().get(self._account_url(f"/trades/{ticket}"))
+        if resp.status_code >= 400:
+            return None
+        trade = resp.json().get("trade", {})
+        if trade.get("state") != "CLOSED":
+            return None
+        avg_close = trade.get("averageClosePrice")
+        return ClosedTradeInfo(
+            exit_price=float(avg_close) if avg_close else None,
+            profit=float(trade.get("realizedPL", 0.0)),
         )
 
     def get_open_positions(self) -> list[OpenPosition]:

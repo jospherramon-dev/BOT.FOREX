@@ -1,10 +1,18 @@
 """
-Módulo B — Motor de Trading y Gestión de Riesgo (próximo paso).
+Módulo B — Motor de Trading y Gestión de Riesgo.
 
-Contendrá:
-- trading_engine.py : bucle principal (velas → estrategia → órdenes).
-- risk_manager.py   : lote dinámico por % de riesgo, SL/TP en pips,
-                      break-even y trailing stop.
-- position_manager.py: supervisión de posiciones abiertas y sincronización
-                      broker ↔ base de datos.
+- risk_manager.py   : funciones puras de riesgo (lote dinámico, SL/TP,
+                      break-even, trailing stop, clasificación de cierres).
+- trading_engine.py : bucle principal por usuario (velas → estrategia →
+                      órdenes → supervisión de posiciones) y registro de
+                      motores activos.
 """
+
+from app.engine.trading_engine import (
+    TradingEngine,
+    get_engine,
+    start_engine,
+    stop_engine,
+)
+
+__all__ = ["TradingEngine", "get_engine", "start_engine", "stop_engine"]

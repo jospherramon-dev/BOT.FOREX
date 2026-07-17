@@ -54,6 +54,14 @@ class OrderResult:
 
 
 @dataclass(frozen=True)
+class ClosedTradeInfo:
+    """Datos reales de una posición ya cerrada en el broker."""
+
+    exit_price: float | None
+    profit: float | None                # realizado, en divisa de la cuenta
+
+
+@dataclass(frozen=True)
 class OpenPosition:
     ticket: str
     symbol: str
@@ -138,3 +146,11 @@ class BrokerConnector(ABC):
     @abstractmethod
     def get_open_positions(self) -> list[OpenPosition]:
         """Posiciones abiertas actualmente en el broker."""
+
+    def get_closed_trade_info(self, ticket: str) -> ClosedTradeInfo | None:
+        """
+        Precio de salida y beneficio realizado de una posición cerrada.
+        Opcional: los conectores que no lo soporten devuelven None y el
+        motor estima los valores con el último precio conocido.
+        """
+        return None

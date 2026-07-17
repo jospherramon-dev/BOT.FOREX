@@ -13,7 +13,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import assets, auth, broker
+from app.api.routes import assets, auth, bot, broker, ws
 from app.core.config import settings
 from app.core.logger import setup_logging
 from app.db.database import init_db
@@ -56,8 +56,12 @@ app.include_router(auth.router, prefix=settings.API_V1_PREFIX)
 app.include_router(broker.router, prefix=settings.API_V1_PREFIX)
 app.include_router(assets.router, prefix=settings.API_V1_PREFIX)
 
-# Los routers de los Módulos B (engine), C (backtesting) y D (telegram)
-# se incluirán aquí a medida que se implementen.
+# --- Rutas del Módulo B (motor de trading + tiempo real) ----------------
+app.include_router(bot.router, prefix=settings.API_V1_PREFIX)
+app.include_router(ws.router)  # /ws/live (sin prefijo de versión)
+
+# Los routers de los Módulos C (backtesting) y D (telegram) se incluirán
+# aquí a medida que se implementen.
 
 
 @app.get("/health", tags=["Sistema"])

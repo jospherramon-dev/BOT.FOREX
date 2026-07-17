@@ -17,6 +17,7 @@ import pandas as pd
 from app.brokers.base import (
     AccountInfo,
     BrokerConnector,
+    ClosedTradeInfo,
     OpenPosition,
     OrderResult,
     TickPrice,
@@ -231,6 +232,18 @@ class MT5Connector(BrokerConnector):
             executed_price=result.price,
             message="Posición cerrada",
         )
+
+    def get_closed_trade_info(self, ticket: str) -> ClosedTradeInfo | None:
+        """Consulta el histórico de deals de la posición cerrada."""
+        deals = mt5.history_deals_get(position=int(ticket))
+        if not deals:
+            return None
+        # Los deals de salida (DEAL_ENTRY_OUT) cierran la posición.
+        out_deals = [d for d in deals if d.entry == mt5.DEAL_ENTRY_OUT]
+        if not out_deals:
+            return None
+        profit = sum(d.profit + d.swap + d.commission for d in out_deals)
+        return ClosedTradeInfo(exit_price=out_deals[-1].price, profit=profit)
 
     def get_open_positions(self) -> list[OpenPosition]:
         positions = mt5.positions_get() or []

@@ -45,11 +45,27 @@ _CLOSE_REASONS = {
 # 1. Cliente de la Bot API
 # ---------------------------------------------------------------------------
 async def _api_call(token: str, method: str, payload: dict) -> dict:
-    """POST a la Bot API. Devuelve el JSON de respuesta (ok/description)."""
+    """
+    POST a la Bot API. Devuelve el JSON de respuesta (ok/description).
+
+    Si la respuesta no es JSON válido (típico cuando un proveedor de
+    internet bloquea api.telegram.org y lo intercepta con una página HTML),
+    devuelve un dict de error legible en lugar de lanzar una excepción.
+    """
     url = f"{_API_BASE}/bot{token}/{method}"
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with httpx.AsyncClient(timeout=15.0) as client:
         resp = await client.post(url, json=payload)
-        return resp.json()
+        try:
+            return resp.json()
+        except ValueError:
+            return {
+                "ok": False,
+                "description": (
+                    f"Telegram devolvió una respuesta no válida (HTTP {resp.status_code}). "
+                    "Es probable que su proveedor de internet bloquee api.telegram.org: "
+                    "pruebe con una VPN a nivel de sistema (no solo del navegador)."
+                ),
+            }
 
 
 async def send_message(token: str, chat_id: str, text: str) -> tuple[bool, str]:
@@ -65,23 +81,36 @@ async def send_message(token: str, chat_id: str, text: str) -> tuple[bool, str]:
         if data.get("ok"):
             return True, "Mensaje enviado"
         return False, str(data.get("description", "Error desconocido de Telegram"))
-    except httpx.HTTPError as exc:
+    except Exception as exc:  # noqa: BLE001 — cualquier fallo se reporta, no revienta
         return False, f"Error de red: {exc}"
 
 
 async def test_connection(token: str, chat_id: str) -> dict:
     """
     Botón "Probar Conexión" del dashboard: valida el token con getMe y
-    envía un mensaje de prueba al chat indicado.
+    envía un mensaje de prueba al chat indicado. Nunca lanza: todo fallo
+    (red, bloqueo del ISP, respuesta corrupta) vuelve como success=False
+    con un mensaje explicativo.
     """
     try:
         me = await _api_call(token, "getMe", {})
-    except httpx.HTTPError as exc:
-        return {"success": False, "message": f"Error de red: {exc}"}
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "success": False,
+            "message": (
+                f"No se pudo contactar a api.telegram.org: {exc}. "
+                "Si su proveedor bloquea Telegram, use una VPN a nivel de "
+                "sistema (la VPN del navegador no cubre a este servidor)."
+            ),
+        }
 
     if not me.get("ok"):
-        return {"success": False,
-                "message": "Token inválido: Telegram rechazó getMe"}
+        return {
+            "success": False,
+            "message": str(
+                me.get("description", "Token inválido: Telegram rechazó getMe")
+            ),
+        }
 
     bot_username = me["result"].get("username", "desconocido")
     ok, detail = await send_message(

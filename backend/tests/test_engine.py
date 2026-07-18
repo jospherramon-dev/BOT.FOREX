@@ -194,6 +194,57 @@ def test_ciclo_completo_apertura_breakeven_cierre(user_with_config):
         assert trade.closed_at is not None
 
 
+def test_reanuda_bots_habilitados_al_arrancar(user_with_config, monkeypatch):
+    """
+    Tras un corte de luz, bot_enabled sigue en True en la BD: al arrancar
+    el servidor, resume_enabled_bots debe reconectar el broker y relanzar
+    el motor sin intervención del usuario.
+    """
+    from app.core.security import encrypt_secret
+    from app.db.models import BrokerCredential, BrokerType
+    from app.engine import trading_engine as te
+
+    user_id = user_with_config
+    with SessionLocal() as db:
+        db.add(BrokerCredential(
+            user_id=user_id,
+            broker_type=BrokerType.OANDA,
+            encrypted_api_key=encrypt_secret("clave-fake"),
+            account_id="101-001-000000-001",
+            is_demo=True,
+        ))
+        db.commit()
+
+    fake = FakeConnector()
+    monkeypatch.setattr("app.brokers.factory.create_connector", lambda cred: fake)
+
+    async def _flow():
+        resumed = await te.resume_enabled_bots()
+        engine = te.get_engine(user_id)
+        running = engine is not None and engine.is_running
+        await te.stop_engine(user_id)
+        return resumed, running
+
+    resumed, running = asyncio.run(_flow())
+    assert resumed == 1
+    assert running is True
+    assert fake.connect_calls == 1
+
+    with SessionLocal() as db:
+        db.query(BrokerCredential).filter_by(user_id=user_id).delete()
+        db.commit()
+
+
+def test_sqlite_endurecido_contra_cortes():
+    """La BD debe operar en WAL con synchronous=FULL (durabilidad ante cortes)."""
+    from app.db.database import engine as db_engine
+
+    with db_engine.connect() as conn:
+        assert conn.exec_driver_sql("PRAGMA journal_mode").scalar() == "wal"
+        # synchronous: 2 = FULL
+        assert conn.exec_driver_sql("PRAGMA synchronous").scalar() == 2
+
+
 def test_reconexion_automatica_tras_fallos_de_datos(user_with_config):
     """
     Si el broker deja de entregar velas (p. ej. MT5 pierde la conexión IPC

@@ -13,7 +13,7 @@ Compatible con SQLite (por defecto, cero configuración) y PostgreSQL
 
 from collections.abc import Generator
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.core.config import settings
@@ -31,6 +31,25 @@ engine = create_engine(
     connect_args=_connect_args,
     pool_pre_ping=True,  # descarta conexiones muertas (útil en PostgreSQL)
 )
+
+if settings.DATABASE_URL.startswith("sqlite"):
+
+    @event.listens_for(engine, "connect")
+    def _set_sqlite_durability(dbapi_conn, _record) -> None:
+        """
+        Endurece SQLite contra cortes de energía:
+
+        - WAL (write-ahead log): las escrituras van primero a un journal
+          separado; un corte a mitad de escritura no corrompe la BD y lo
+          ya confirmado se recupera al reabrir.
+        - synchronous=FULL: cada commit espera al fsync del disco antes de
+          confirmarse — máxima durabilidad a costa de unos ms por commit
+          (irrelevante para el volumen de este bot).
+        """
+        cursor = dbapi_conn.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA synchronous=FULL")
+        cursor.close()
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 

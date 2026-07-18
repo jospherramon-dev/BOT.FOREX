@@ -30,6 +30,7 @@ from app.db.database import SessionLocal
 from app.db.models import (
     Asset,
     BotConfig,
+    SystemLog,
     Trade,
     TradeDirection,
     TradeStatus,
@@ -62,6 +63,8 @@ class TradingEngine:
         self._last_candle: dict[str, pd.Timestamp] = {}
         # Fallos de datos consecutivos (para la reconexión automática).
         self._data_failures = 0
+        # Último mensaje persistido (evita llenar la BD con warnings repetidos).
+        self._last_persisted_msg = ""
 
     # ------------------------------------------------------------------
     # Ciclo de vida
@@ -454,9 +457,31 @@ class TradingEngine:
         )
 
     async def _log(self, level: str, message: str) -> None:
-        """Log a consola/buffer + evento para la consola en vivo del dashboard."""
+        """
+        Log a consola/buffer + evento en vivo + PERSISTENCIA en system_logs.
+
+        La copia en base de datos sobrevive a reinicios y cortes de luz —
+        al reconectar, la consola del dashboard se repuebla desde ahí.
+        Los mensajes idénticos consecutivos (p. ej. el mismo warning en
+        cada ciclo) se persisten una sola vez para no inflar la BD.
+        """
         logger.log(logging.getLevelName(level), message)
         await event_bus.publish("log", {"level": level, "message": message})
+
+        if message == self._last_persisted_msg:
+            return
+        self._last_persisted_msg = message
+
+        def _persist() -> None:
+            with SessionLocal() as db:
+                db.add(SystemLog(user_id=self.user_id, level=level,
+                                 source="engine", message=message))
+                db.commit()
+
+        try:
+            await asyncio.to_thread(_persist)
+        except Exception:  # noqa: BLE001 — un fallo de log nunca frena el motor
+            logger.exception("No se pudo persistir el log en system_logs")
 
 
 # ---------------------------------------------------------------------------
@@ -487,3 +512,54 @@ async def stop_engine(user_id: int) -> bool:
         return False
     await engine.stop()
     return True
+
+
+async def resume_enabled_bots() -> int:
+    """
+    Reanuda al arrancar el servidor los bots que quedaron habilitados.
+
+    Tras un corte de luz o un reinicio del PC, `bot_enabled` sigue en True
+    en la base de datos pero el motor (que vive en memoria) desapareció.
+    Esta función se llama en el startup de la aplicación: reconecta el
+    broker de cada usuario con el bot habilitado y relanza su motor, sin
+    que nadie tenga que pulsar "Iniciar" de nuevo.
+
+    Devuelve cuántos bots se reanudaron.
+    """
+    from app.brokers.factory import create_connector
+    from app.db.models import BrokerCredential
+
+    with SessionLocal() as db:
+        configs = db.scalars(
+            select(BotConfig).where(BotConfig.bot_enabled.is_(True))
+        ).all()
+        pending: list[tuple[int, BrokerCredential]] = []
+        for config in configs:
+            credential = db.scalar(
+                select(BrokerCredential).where(
+                    BrokerCredential.user_id == config.user_id,
+                    BrokerCredential.is_active.is_(True),
+                )
+            )
+            if credential is not None:
+                pending.append((config.user_id, credential))
+
+    resumed = 0
+    for user_id, credential in pending:
+        try:
+            connector = create_connector(credential)
+            connected = await asyncio.to_thread(connector.connect)
+        except Exception:  # noqa: BLE001 — un usuario fallido no frena al resto
+            logger.exception("Reanudación fallida (usuario %s)", user_id)
+            continue
+        if not connected:
+            logger.warning(
+                "Reanudación: el broker no conectó (usuario %s); "
+                "el bot queda detenido hasta un Iniciar manual",
+                user_id,
+            )
+            continue
+        await start_engine(user_id, connector)
+        resumed += 1
+        logger.info("Bot reanudado automáticamente tras el arranque (usuario %s)", user_id)
+    return resumed

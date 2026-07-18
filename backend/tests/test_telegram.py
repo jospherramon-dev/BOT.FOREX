@@ -121,6 +121,55 @@ def test_notificador_ignora_eventos_sin_usuario(telegram_user):
     assert sent == []
 
 
+def test_probar_conexion_nunca_lanza(monkeypatch):
+    """
+    Un fallo inesperado de red (ISP bloqueando Telegram, respuesta HTML,
+    DNS caído) debe volver como success=False con mensaje explicativo —
+    nunca como una excepción que el usuario ve como 'Internal Server Error'.
+    """
+    from app.notifications import telegram_service
+
+    async def boom(*_args, **_kwargs):
+        raise RuntimeError("conexión reseteada por el proveedor")
+
+    monkeypatch.setattr(telegram_service, "_api_call", boom)
+    result = asyncio.run(telegram_service.test_connection("token", "chat"))
+    assert result["success"] is False
+    assert "api.telegram.org" in result["message"]
+
+    ok, detail = asyncio.run(telegram_service.send_message("token", "chat", "hola"))
+    assert ok is False
+    assert "Error de red" in detail
+
+
+def test_respuesta_no_json_se_reporta_como_bloqueo(monkeypatch):
+    """Si el ISP intercepta con HTML, _api_call devuelve un error legible."""
+    from app.notifications import telegram_service
+
+    class FakeResponse:
+        status_code = 403
+
+        def json(self):
+            raise ValueError("not json")
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def post(self, *_args, **_kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr(
+        telegram_service.httpx, "AsyncClient", lambda **_kw: FakeClient()
+    )
+    data = asyncio.run(telegram_service._api_call("token", "getMe", {}))
+    assert data["ok"] is False
+    assert "bloquee api.telegram.org" in data["description"]
+
+
 def test_notificador_respeta_flag_deshabilitado(telegram_user):
     with SessionLocal() as db:
         config = db.query(BotConfig).filter_by(user_id=telegram_user).one()

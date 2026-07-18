@@ -12,8 +12,10 @@ venv/
 *.key
 secret.key
 
-# Base de datos local
+# Base de datos local (incluye los auxiliares del modo WAL)
 *.db
+*.db-wal
+*.db-shm
 *.sqlite3
 
 # Node / React

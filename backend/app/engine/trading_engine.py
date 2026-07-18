@@ -42,6 +42,8 @@ logger = logging.getLogger(__name__)
 
 POLL_INTERVAL_SECONDS = 5.0
 HISTORY_BARS = 300  # velas descargadas por ciclo (holgura sobre min_bars)
+#: Fallos de datos consecutivos antes de intentar reconectar con el broker.
+RECONNECT_AFTER_FAILURES = 3
 
 _TIMEFRAME_MINUTES = {
     "M1": 1, "M5": 5, "M15": 15, "M30": 30, "H1": 60, "H4": 240, "D1": 1440,
@@ -58,6 +60,8 @@ class TradingEngine:
         self._running = False
         # Última vela evaluada por símbolo → cada vela genera 1 sola evaluación.
         self._last_candle: dict[str, pd.Timestamp] = {}
+        # Fallos de datos consecutivos (para la reconexión automática).
+        self._data_failures = 0
 
     # ------------------------------------------------------------------
     # Ciclo de vida
@@ -282,8 +286,10 @@ class TradingEngine:
             )
         except Exception as exc:  # noqa: BLE001
             await self._log("WARNING", f"Sin velas de {asset.symbol}: {exc}")
+            await self._handle_data_failure()
             return False
 
+        self._data_failures = 0  # datos OK: la conexión está sana
         if len(df) < strategy.min_bars:
             return False
 
@@ -382,6 +388,36 @@ class TradingEngine:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+    async def _handle_data_failure(self) -> None:
+        """
+        Reconexión automática tras varios fallos de datos consecutivos.
+
+        Cubre el caso típico de MT5: si el terminal se cierra o el puente
+        IPC se corta (-10004, 'No IPC connection'), el motor se reconecta
+        solo en lugar de quedarse emitiendo warnings hasta un reinicio
+        manual.
+        """
+        self._data_failures += 1
+        if self._data_failures < RECONNECT_AFTER_FAILURES:
+            return
+        self._data_failures = 0
+        await self._log(
+            "WARNING",
+            "Conexión con el broker degradada: intentando reconectar…",
+        )
+        try:
+            ok = await asyncio.to_thread(self.connector.connect)
+        except Exception:  # noqa: BLE001
+            ok = False
+        if ok:
+            await self._log("INFO", "Reconexión con el broker exitosa")
+        else:
+            await self._log(
+                "ERROR",
+                "Reconexión fallida; se reintentará en unos ciclos "
+                "(verifique que el terminal MT5 esté abierto)",
+            )
+
     def _count_open_trades(self, db) -> int:
         return len(
             db.scalars(

@@ -8,6 +8,7 @@ Tablas:
 - bot_configs         : parámetros de riesgo/estrategia por usuario.
 - trades              : historial de operaciones (vivas y cerradas).
 - backtest_runs       : resultados de simulaciones (Módulo C).
+- optimization_runs   : historial permanente de barridos de parámetros (Módulo C+).
 - system_logs         : eventos persistidos para auditoría.
 """
 
@@ -237,6 +238,46 @@ class BacktestRun(Base):
 
     # Serie de equity serializada en JSON (para pintar la curva en el front).
     equity_curve_json: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class OptimizationRun(Base):
+    """
+    Historial PERMANENTE de un barrido de optimización (Módulo C+).
+
+    A diferencia del job en memoria (`app/backtesting/optimizer.py`, que se
+    pierde al reiniciar el servidor o al superar 5 corridas por usuario),
+    este registro sobrevive indefinidamente — igual que `BacktestRun` para
+    backtests individuales. Se crea una vez que el barrido termina.
+    """
+
+    __tablename__ = "optimization_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    strategy_name: Mapped[str] = mapped_column(String(60))
+    symbol: Mapped[str] = mapped_column(String(12))
+    timeframe: Mapped[str] = mapped_column(String(8))
+
+    total_combinations: Mapped[int] = mapped_column(Integer)
+    validation_split: Mapped[float] = mapped_column(Float, default=0.0)
+    train_rows: Mapped[int] = mapped_column(Integer, default=0)
+    valid_rows: Mapped[int] = mapped_column(Integer, default=0)
+    train_end: Mapped[str | None] = mapped_column(String(40), nullable=True)
+
+    # Resumen de la mejor combinación (evita parsear el JSON completo solo
+    # para listar el historial).
+    best_stop_loss_pips: Mapped[float] = mapped_column(Float)
+    best_take_profit_pips: Mapped[float] = mapped_column(Float)
+    best_break_even_trigger_pips: Mapped[float] = mapped_column(Float)
+    best_net_profit: Mapped[float] = mapped_column(Float)
+    best_profit_factor: Mapped[float] = mapped_column(Float)
+    best_validation_net_profit: Mapped[float | None] = mapped_column(Float, nullable=True)
+    best_validation_profit_factor: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    # Barrido completo (todas las combinaciones con sus métricas y, si hubo
+    # validación out-of-sample, también esas métricas por fila).
+    results_json: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 

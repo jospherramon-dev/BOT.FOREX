@@ -28,13 +28,14 @@ from app.backtesting.data_loader import (
 )
 from app.backtesting import optimizer
 from app.backtesting.metrics import compute_metrics, downsample_equity
-from app.db.models import BacktestRun
+from app.db.models import BacktestRun, OptimizationRun
 from app.schemas.backtest import (
     BacktestRequest,
     BacktestResultOut,
     BacktestRunSummary,
     DatasetInfo,
     OptimizationRequest,
+    OptimizationRunSummary,
     OptimizationStarted,
 )
 from app.strategies import STRATEGY_REGISTRY, get_strategy
@@ -329,6 +330,57 @@ def optimization_status(job_id: str, current_user: CurrentUser) -> dict:
             status.HTTP_404_NOT_FOUND, detail="Optimización no encontrada"
         )
     return job.snapshot()
+
+
+# ---------------------------------------------------------------------------
+# Historial PERMANENTE de optimizaciones (sobrevive reinicios del servidor;
+# el job en memoria de arriba solo retiene las 5 corridas más recientes).
+# Nombre de ruta distinto ("optimize-runs") a propósito: evita cualquier
+# ambigüedad con "/optimize/{job_id}".
+# ---------------------------------------------------------------------------
+@router.get("/optimize-runs", response_model=list[OptimizationRunSummary])
+def list_optimization_runs(
+    db: DBSession, current_user: CurrentUser, limit: int = 20, offset: int = 0
+) -> list[OptimizationRun]:
+    return list(
+        db.scalars(
+            select(OptimizationRun)
+            .where(OptimizationRun.user_id == current_user.id)
+            .order_by(OptimizationRun.created_at.desc())
+            .limit(min(limit, 100))
+            .offset(offset)
+        )
+    )
+
+
+@router.get("/optimize-runs/{run_id}")
+def get_optimization_run(run_id: int, db: DBSession, current_user: CurrentUser) -> dict:
+    """
+    Detalle completo de una optimización pasada, en el mismo formato que
+    devuelve el polling en vivo (`job.snapshot()`) — así el dashboard
+    reutiliza la misma tabla para mostrar corridas históricas.
+    """
+    run = db.get(OptimizationRun, run_id)
+    if run is None or run.user_id != current_user.id:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, detail="Optimización no encontrada"
+        )
+    return {
+        "job_id": f"saved-{run.id}",
+        "status": "done",
+        "error": "",
+        "strategy_name": run.strategy_name,
+        "symbol": run.symbol,
+        "timeframe": run.timeframe,
+        "total": run.total_combinations,
+        "completed": run.total_combinations,
+        "validation_split": run.validation_split,
+        "train_rows": run.train_rows,
+        "valid_rows": run.valid_rows,
+        "train_end": run.train_end,
+        "created_at": run.created_at.isoformat(),
+        "results": json.loads(run.results_json),
+    }
 
 
 # ---------------------------------------------------------------------------

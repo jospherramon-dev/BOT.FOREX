@@ -83,6 +83,27 @@ class OptimizationStarted(BaseModel):
     total_combinations: int
 
 
+class OptimizationRunSummary(BaseModel):
+    """Fila del historial permanente de optimizaciones."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    strategy_name: str
+    symbol: str
+    timeframe: str
+    total_combinations: int
+    validation_split: float
+    best_stop_loss_pips: float
+    best_take_profit_pips: float
+    best_break_even_trigger_pips: float
+    best_net_profit: float
+    best_profit_factor: float
+    best_validation_net_profit: float | None
+    best_validation_profit_factor: float | None
+    created_at: datetime
+
+
 class BacktestRunSummary(BaseModel):
     """Fila del historial de backtests."""
 

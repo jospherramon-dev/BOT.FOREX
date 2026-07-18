@@ -6,7 +6,7 @@
  * - Historial de simulaciones anteriores.
  */
 
-import { CheckCircle2, FileUp, Loader2, Play, SlidersHorizontal, Trash2 } from 'lucide-react';
+import { CheckCircle2, Eye, FileUp, Loader2, Play, SlidersHorizontal, Trash2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import {
   Area,
@@ -48,12 +48,19 @@ function OptimizationPanel({ form, strategies }) {
   const [job, setJob] = useState(null);
   const [error, setError] = useState('');
   const [applied, setApplied] = useState(null);
+  const [runsHistory, setRunsHistory] = useState([]);
   const pollRef = useRef(null);
 
   const strategy = strategies.find((s) => s.name === form.strategy_name);
   const numericParams = Object.entries(strategy?.default_params ?? {}).filter(
     ([, v]) => typeof v === 'number',
   );
+
+  // El historial es PERMANENTE (queda en la base de datos): sobrevive a
+  // cerrar el navegador, reiniciar el backend, o lanzar más optimizaciones.
+  const refreshRunsHistory = () =>
+    api.get('/backtest/optimize-runs').then(setRunsHistory).catch(() => {});
+  useEffect(() => { refreshRunsHistory(); }, []);
 
   // Detiene el polling al desmontar la página.
   useEffect(() => () => clearInterval(pollRef.current), []);
@@ -64,7 +71,10 @@ function OptimizationPanel({ form, strategies }) {
       try {
         const snapshot = await api.get(`/backtest/optimize/${jobId}`);
         setJob(snapshot);
-        if (snapshot.status !== 'running') clearInterval(pollRef.current);
+        if (snapshot.status !== 'running') {
+          clearInterval(pollRef.current);
+          refreshRunsHistory(); // el barrido recién terminado ya quedó guardado
+        }
       } catch {
         clearInterval(pollRef.current);
       }
@@ -104,6 +114,17 @@ function OptimizationPanel({ form, strategies }) {
       const { job_id, total_combinations } = await api.post('/backtest/optimize', payload);
       setJob({ job_id, status: 'running', completed: 0, total: total_combinations, results: [] });
       poll(job_id);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  /** Recarga una optimización pasada desde el historial permanente. */
+  const loadHistoricalRun = async (id) => {
+    setError('');
+    clearInterval(pollRef.current);
+    try {
+      setJob(await api.get(`/backtest/optimize-runs/${id}`));
     } catch (err) {
       setError(err.message);
     }
@@ -301,6 +322,65 @@ function OptimizationPanel({ form, strategies }) {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* Historial PERMANENTE: cada barrido queda guardado en la base de
+          datos apenas termina, sin importar que cierres el navegador,
+          reinicies el servidor, o corras más optimizaciones después. */}
+      {runsHistory.length > 0 && (
+        <div className="mt-6">
+          <p className="text-xs font-semibold uppercase tracking-wider text-term-dim mb-2">
+            Historial de optimizaciones (guardado permanentemente)
+          </p>
+          <div className="overflow-x-auto border border-term-border rounded-md">
+            <table className="w-full">
+              <thead className="border-b border-term-border">
+                <tr>
+                  <th className="th">Fecha</th>
+                  <th className="th">Estrategia</th>
+                  <th className="th">Par</th>
+                  <th className="th text-right">Combos</th>
+                  <th className="th text-right">Mejor SL/TP/BE</th>
+                  <th className="th text-right">P/L optim.</th>
+                  <th className="th text-right">P/L valid.</th>
+                  <th className="th text-right">PF valid.</th>
+                  <th className="th" />
+                </tr>
+              </thead>
+              <tbody>
+                {runsHistory.map((r) => (
+                  <tr key={r.id} className="border-b border-term-border/50 hover:bg-term-panel2">
+                    <td className="td text-xs text-term-dim">
+                      {new Date(r.created_at).toLocaleString('es')}
+                    </td>
+                    <td className="td">{r.strategy_name}</td>
+                    <td className="td font-semibold">{r.symbol}</td>
+                    <td className="td text-right">{r.total_combinations}</td>
+                    <td className="td text-right">
+                      {r.best_stop_loss_pips}/{r.best_take_profit_pips}/{r.best_break_even_trigger_pips}
+                    </td>
+                    <td className={`td text-right ${r.best_net_profit >= 0 ? 'text-term-good' : 'text-term-bad'}`}>
+                      {signed(r.best_net_profit)}
+                    </td>
+                    <td className={`td text-right ${(r.best_validation_net_profit ?? 0) >= 0 ? 'text-term-good' : 'text-term-bad'}`}>
+                      {r.best_validation_net_profit != null ? signed(r.best_validation_net_profit) : '—'}
+                    </td>
+                    <td className="td text-right">{r.best_validation_profit_factor ?? '—'}</td>
+                    <td className="td text-right">
+                      <button
+                        onClick={() => loadHistoricalRun(r.id)}
+                        className="btn-ghost !px-2 !py-1 text-xs"
+                        title="Ver la tabla completa de este barrido"
+                      >
+                        <Eye className="w-3.5 h-3.5" /> Ver tabla
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </Panel>

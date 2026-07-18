@@ -16,7 +16,11 @@ import pytest  # noqa: E402
 
 @pytest.fixture(scope="session", autouse=True)
 def clean_test_database():
-    """Elimina la BD de prueba antes y después de la sesión de tests."""
+    """Elimina la BD de prueba, crea el esquema completo, y limpia al final."""
     TEST_DB_PATH.unlink(missing_ok=True)
+
+    from app.db.database import init_db
+
+    init_db()  # crea todas las tablas ANTES de que cualquier test las use
     yield
     TEST_DB_PATH.unlink(missing_ok=True)

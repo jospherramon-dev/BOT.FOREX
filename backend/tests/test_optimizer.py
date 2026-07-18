@@ -1,5 +1,7 @@
 """Tests del optimizador de parámetros (grid search)."""
 
+import json
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -152,6 +154,87 @@ def test_validacion_out_of_sample_simula_ambos_tramos():
         # In-sample gana; out-of-sample pierde → sobreajuste visible.
         assert row["metrics"]["net_profit"] > 0
         assert row["validation"]["net_profit"] < 0
+
+
+def test_barrido_completo_se_persiste_en_historial():
+    """
+    El historial de optimizaciones debe sobrevivir aunque el job en memoria
+    se pierda (reinicio del servidor, o expulsión tras 5 corridas por
+    usuario) — el mismo problema que ya resuelve BacktestRun para backtests
+    individuales.
+    """
+    from app.db.database import SessionLocal, init_db
+    from app.db.models import OptimizationRun
+
+    init_db()
+    closes = [1.1000] * 6 + list(np.linspace(1.1005, 1.1100, 30))
+    df = _df_from_closes(closes)
+    base = BacktestParams(
+        symbol="EURUSD", timeframe="M15", initial_balance=10_000,
+        spread_pips=0.0, strategy_name="test_buy_once",
+        break_even_enabled=False,
+    )
+    combos = build_combos(
+        "test_buy_once", BASE_RISK,
+        stop_loss_grid=[30], take_profit_grid=[40, 80],
+        break_even_grid=[], strategy_param_grid={},
+    )
+    job = create_job(4321, "test_buy_once", "EURUSD", "M15", len(combos))
+    run_job(job, df, base, combos)
+
+    with SessionLocal() as db:
+        saved = (
+            db.query(OptimizationRun)
+            .filter_by(user_id=4321)
+            .order_by(OptimizationRun.id.desc())
+            .first()
+        )
+        assert saved is not None
+        assert saved.total_combinations == 2
+        assert saved.strategy_name == "test_buy_once"
+        expected_best = job.snapshot()["results"][0]
+        assert saved.best_net_profit == expected_best["metrics"]["net_profit"]
+        assert saved.best_take_profit_pips == expected_best["take_profit_pips"]
+        # El barrido completo (ambas filas) debe poder reconstruirse del JSON.
+        stored_results = json.loads(saved.results_json)
+        assert len(stored_results) == 2
+
+        db.delete(saved)
+        db.commit()
+
+
+def test_job_fallido_no_genera_historial():
+    """Un barrido con datos insuficientes no debe crear una fila espuria."""
+    from app.db.database import SessionLocal
+    from app.db.models import OptimizationRun
+
+    df_insuficiente = _df_from_closes([1.1000] * 3)  # menos velas que min_bars
+    base = BacktestParams(
+        symbol="EURUSD", timeframe="M15", initial_balance=10_000,
+        strategy_name="test_buy_once",
+    )
+    combos = build_combos("test_buy_once", BASE_RISK, [30], [60], [], {})
+    job = create_job(4322, "test_buy_once", "EURUSD", "M15", len(combos))
+
+    # Fuerza el error dentro de _simulate llamando run_job con datos que
+    # provocan una excepción de estrategia (min_bars no cumplido en Backtester).
+    from app.backtesting import optimizer as optimizer_module
+
+    original_simulate = optimizer_module._simulate
+
+    def _boom(*args, **kwargs):
+        raise ValueError("datos insuficientes (forzado en test)")
+
+    optimizer_module._simulate = _boom
+    try:
+        run_job(job, df_insuficiente, base, combos)
+    finally:
+        optimizer_module._simulate = original_simulate
+
+    assert job.status == "error"
+    with SessionLocal() as db:
+        saved = db.query(OptimizationRun).filter_by(user_id=4322).first()
+        assert saved is None
 
 
 def test_registro_de_jobs_por_usuario():

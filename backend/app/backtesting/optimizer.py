@@ -22,6 +22,7 @@ descartarse. Aun así, valide la ganadora en cuenta demo antes de operar.
 from __future__ import annotations
 
 import itertools
+import json
 import logging
 import threading
 import uuid
@@ -213,6 +214,56 @@ def run_job(
         job.status = "error"
         job.error = str(exc)
         logger.exception("Optimización %s falló", job.id)
+    finally:
+        _persist_completed_job(job)
+
+
+def _persist_completed_job(job: OptimizationJob) -> None:
+    """
+    Guarda el barrido en `optimization_runs` para que sobreviva al
+    reinicio del servidor y a la expulsión de la caché en memoria (que
+    solo retiene los 5 jobs más recientes por usuario). Un job fallido o
+    sin resultados no genera historial — igual que un backtest que nunca
+    corrió no aparece en "Simulaciones anteriores".
+    """
+    if job.status != "done" or not job.results:
+        return
+
+    # Import diferido: evita un ciclo de import entre optimizer y db.models.
+    from app.db.database import SessionLocal
+    from app.db.models import OptimizationRun
+
+    snapshot = job.snapshot()
+    best = snapshot["results"][0]  # ya viene ordenado por P/L de optimización
+    best_validation = best.get("validation") or {}
+
+    with SessionLocal() as db:
+        db.add(
+            OptimizationRun(
+                user_id=job.user_id,
+                strategy_name=job.strategy_name,
+                symbol=job.symbol,
+                timeframe=job.timeframe,
+                total_combinations=job.total,
+                validation_split=job.validation_split,
+                train_rows=job.train_rows,
+                valid_rows=job.valid_rows,
+                train_end=job.train_end,
+                best_stop_loss_pips=best["stop_loss_pips"],
+                best_take_profit_pips=best["take_profit_pips"],
+                best_break_even_trigger_pips=best["break_even_trigger_pips"],
+                best_net_profit=best["metrics"]["net_profit"],
+                best_profit_factor=best["metrics"]["profit_factor"],
+                best_validation_net_profit=best_validation.get("net_profit"),
+                best_validation_profit_factor=best_validation.get("profit_factor"),
+                results_json=json.dumps(snapshot["results"]),
+            )
+        )
+        db.commit()
+    logger.info(
+        "Optimización %s persistida en el historial (usuario %s)",
+        job.id, job.user_id,
+    )
 
 
 # ---------------------------------------------------------------------------

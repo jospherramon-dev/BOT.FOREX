@@ -55,8 +55,11 @@ class FakeConnector(BrokerConnector):
         self.positions: list[OpenPosition] = []
         self.modify_calls: list[tuple] = []
         self.closed_info: ClosedTradeInfo | None = None
+        self.connect_calls = 0
+        self.fail_history = False  # simula pérdida de conexión (IPC caído)
 
     def connect(self) -> bool:
+        self.connect_calls += 1
         return True
 
     def disconnect(self) -> None:
@@ -74,6 +77,8 @@ class FakeConnector(BrokerConnector):
                          time=datetime.now(timezone.utc))
 
     def get_historical_data(self, symbol, timeframe, date_from, date_to):
+        if self.fail_history:
+            raise ConnectionError("(-10004, 'No IPC connection')")
         closes = np.full(60, self.price)
         # Índice temporal FIJO: el motor deduplica por última vela, así que
         # los ciclos 2 y 3 no deben re-evaluar la estrategia.
@@ -187,3 +192,26 @@ def test_ciclo_completo_apertura_breakeven_cierre(user_with_config):
         assert trade.profit == pytest.approx(198.0)
         assert trade.profit_pips == pytest.approx(60, abs=1.5)
         assert trade.closed_at is not None
+
+
+def test_reconexion_automatica_tras_fallos_de_datos(user_with_config):
+    """
+    Si el broker deja de entregar velas (p. ej. MT5 pierde la conexión IPC
+    al cerrarse el terminal), tras varios fallos consecutivos el motor debe
+    intentar reconectar por sí solo — sin requerir un reinicio manual.
+    """
+    user_id = user_with_config
+    connector = FakeConnector()
+    connector.fail_history = True
+    engine = TradingEngine(user_id, connector)
+
+    # Tres ciclos con fallo de datos → debe dispararse una reconexión.
+    for _ in range(3):
+        asyncio.run(engine.run_cycle())
+    assert connector.connect_calls >= 1
+
+    # Al volver los datos, el contador se resetea y no reconecta de más.
+    connector.fail_history = False
+    reconnects = connector.connect_calls
+    asyncio.run(engine.run_cycle())
+    assert connector.connect_calls == reconnects

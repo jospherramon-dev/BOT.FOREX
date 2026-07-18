@@ -16,6 +16,7 @@ from starlette.concurrency import run_in_threadpool
 from app.api.deps import CurrentUser, DBSession
 from app.brokers.factory import create_connector
 from app.core.security import encrypt_secret
+from app.engine.trading_engine import get_engine
 from app.db.models import BrokerCredential, BrokerType
 from app.schemas.broker import (
     BrokerCredentialIn,
@@ -124,6 +125,28 @@ async def test_connection(
     threadpool de Starlette para no bloquear el event-loop.
     """
     cred = _get_owned_credential(db, current_user.id, credential_id)
+
+    # Si el bot está corriendo, se reutiliza SU conexión viva en lugar de
+    # abrir y cerrar otra: el paquete de MT5 usa una conexión global, y un
+    # disconnect() aquí mataría la sesión del motor (-10004 No IPC).
+    engine = get_engine(current_user.id)
+    if engine is not None and engine.is_running:
+        def _probe_live() -> ConnectionTestResult:
+            try:
+                info = engine.connector.get_account_info()
+                return ConnectionTestResult(
+                    success=True,
+                    message=(
+                        f"Conexión activa con {engine.connector.name} "
+                        "(usando la sesión del bot en ejecución)"
+                    ),
+                    account_balance=info.balance,
+                    account_currency=info.currency,
+                )
+            except Exception as exc:  # noqa: BLE001 — se reporta al usuario
+                return ConnectionTestResult(success=False, message=str(exc))
+
+        return await run_in_threadpool(_probe_live)
 
     try:
         connector = create_connector(cred)

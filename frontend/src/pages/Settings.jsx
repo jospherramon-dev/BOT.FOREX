@@ -326,16 +326,48 @@ const RISK_FIELDS = [
 
 function RiskTab() {
   const [config, setConfig] = useState(null);
+  const [strategies, setStrategies] = useState([]);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
 
-  useEffect(() => { api.get('/bot/config').then(setConfig).catch(() => {}); }, []);
+  useEffect(() => {
+    api.get('/bot/config').then(setConfig).catch(() => {});
+    api.get('/bot/strategies').then(setStrategies).catch(() => {});
+  }, []);
 
   if (!config) return <p className="text-sm text-term-muted">Cargando…</p>;
+
+  const activeStrategy = strategies.find((s) => s.name === config.strategy_name);
+  // Parámetros numéricos de la estrategia activa: valor guardado si existe,
+  // si no el default — así "Aplicar al bot" desde el optimizador siempre
+  // queda visible aquí, sin importar si tocó todos los parámetros o no.
+  const strategyNumericParams = Object.entries(activeStrategy?.default_params ?? {}).filter(
+    ([, v]) => typeof v === 'number',
+  );
 
   const set = (f) => (e) => {
     setSaved(false);
     setConfig({ ...config, [f]: e.target.type === 'checkbox' ? e.target.checked : e.target.value });
+  };
+
+  const setStrategyParam = (name) => (e) => {
+    setSaved(false);
+    setConfig({
+      ...config,
+      strategy_params: { ...config.strategy_params, [name]: e.target.value },
+    });
+  };
+
+  const changeStrategy = (e) => {
+    setSaved(false);
+    const nextStrategy = strategies.find((s) => s.name === e.target.value);
+    // Al cambiar de estrategia, sus parámetros vuelven al default: los de
+    // la estrategia anterior no tienen sentido para la nueva.
+    setConfig({
+      ...config,
+      strategy_name: e.target.value,
+      strategy_params: nextStrategy?.default_params ?? {},
+    });
   };
 
   const save = async (e) => {
@@ -344,6 +376,9 @@ function RiskTab() {
     try {
       const payload = { ...config };
       for (const [field] of RISK_FIELDS) payload[field] = +payload[field];
+      for (const [name] of strategyNumericParams) {
+        payload.strategy_params[name] = +payload.strategy_params[name];
+      }
       const updated = await api.put('/bot/config', payload);
       setConfig(updated);
       setSaved(true);
@@ -353,8 +388,47 @@ function RiskTab() {
   };
 
   return (
-    <Panel title="Gestión de riesgo del motor">
+    <Panel
+      title="Gestión de riesgo del motor"
+      actions={
+        <span className="text-xs text-term-dim">
+          Estrategia activa:{' '}
+          <span className="font-semibold text-term-accent">{config.strategy_name}</span>
+        </span>
+      }
+    >
       <form onSubmit={save} className="space-y-4 max-w-2xl">
+        <div>
+          <label className="label">Estrategia</label>
+          <select className="input" value={config.strategy_name} onChange={changeStrategy}>
+            {strategies.map((s) => (
+              <option key={s.name} value={s.name}>{s.name}</option>
+            ))}
+          </select>
+          {activeStrategy && (
+            <p className="mt-1 text-xs text-term-muted">{activeStrategy.description}</p>
+          )}
+        </div>
+
+        {strategyNumericParams.length > 0 && (
+          <div>
+            <label className="label">Parámetros de la estrategia</label>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+              {strategyNumericParams.map(([name, def]) => (
+                <div key={name}>
+                  <label className="text-xs text-term-muted">{name}</label>
+                  <input
+                    type="number"
+                    className="input"
+                    value={config.strategy_params?.[name] ?? def}
+                    onChange={setStrategyParam(name)}
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
           {RISK_FIELDS.map(([field, label, step]) => (
             <div key={field}>

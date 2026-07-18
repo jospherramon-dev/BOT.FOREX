@@ -20,6 +20,7 @@ from app.brokers.base import (
     ClosedTradeInfo,
     OpenPosition,
     OrderResult,
+    SymbolSpecs,
     TickPrice,
 )
 
@@ -231,6 +232,30 @@ class MT5Connector(BrokerConnector):
             ticket=ticket,
             executed_price=result.price,
             message="Posición cerrada",
+        )
+
+    def get_symbol_specs(self, symbol: str) -> SymbolSpecs:
+        """
+        Tamaño de contrato y lote mínimo/paso REALES de esta cuenta MT5.
+
+        Crítico en cuentas Micro/Cent (ej. XM Micro: 1 lote = 1.000
+        unidades, mínimo 0.1; Exness Cent similar): sin esto, el bot
+        calcularía el tamaño de posición asumiendo el estándar de
+        100.000 unidades y el riesgo real quedaría mal por un factor de
+        10x-100x. Si el símbolo no se encuentra, cae al estándar de la
+        clase base.
+        """
+        info = mt5.symbol_info(symbol)
+        if info is None:
+            logger.warning(
+                "symbol_info(%s) no disponible; usando estándar 100.000 "
+                "unidades / lote mínimo 0.01", symbol,
+            )
+            return super().get_symbol_specs(symbol)
+        return SymbolSpecs(
+            contract_size=float(info.trade_contract_size),
+            volume_min=float(info.volume_min),
+            volume_step=float(info.volume_step),
         )
 
     def get_closed_trade_info(self, ticket: str) -> ClosedTradeInfo | None:

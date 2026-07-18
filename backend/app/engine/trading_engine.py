@@ -332,13 +332,34 @@ class TradingEngine:
         entry_ref = tick.ask if direction == "BUY" else tick.bid
 
         account = await asyncio.to_thread(self.connector.get_account_info)
+        # Especificaciones reales de ESTA cuenta: en Micro/Cent el contrato
+        # no es de 100.000 unidades y el lote mínimo/paso difieren — sin
+        # esto, el riesgo calculado quedaría desviado 10x-100x.
+        specs = await asyncio.to_thread(
+            self.connector.get_symbol_specs, asset.symbol
+        )
         pip_value = rm.pip_value_per_lot(
-            asset.symbol, asset.pip_size, entry_ref, account.currency
+            asset.symbol, asset.pip_size, entry_ref, account.currency,
+            contract_size=specs.contract_size,
         )
         lot = rm.calc_lot_size(
             account.balance, config.risk_per_trade_pct,
             config.stop_loss_pips, pip_value,
+            volume_min=specs.volume_min, volume_step=specs.volume_step,
         )
+        # Aviso de transparencia: si el lote mínimo de la cuenta obliga a
+        # arriesgar más de lo configurado, el usuario debe saberlo.
+        min_risk = specs.volume_min * config.stop_loss_pips * pip_value
+        allowed_risk = account.balance * config.risk_per_trade_pct / 100.0
+        if lot == specs.volume_min and min_risk > allowed_risk * 1.05:
+            await self._log(
+                "WARNING",
+                f"El lote mínimo de la cuenta ({specs.volume_min}) arriesga "
+                f"≈{min_risk:.2f} {account.currency}, por encima del "
+                f"{config.risk_per_trade_pct}% configurado "
+                f"({allowed_risk:.2f} {account.currency}). Considere una "
+                f"cuenta Micro/Cent o un balance mayor.",
+            )
         sl, tp = rm.calc_sl_tp(
             direction, entry_ref,
             config.stop_loss_pips, config.take_profit_pips, asset.pip_size,

@@ -20,6 +20,7 @@ from app.brokers.base import (
     ClosedTradeInfo,
     OpenPosition,
     OrderResult,
+    SymbolSpecs,
     TickPrice,
 )
 from app.db.database import SessionLocal, init_db
@@ -192,6 +193,30 @@ def test_ciclo_completo_apertura_breakeven_cierre(user_with_config):
         assert trade.profit == pytest.approx(198.0)
         assert trade.profit_pips == pytest.approx(60, abs=1.5)
         assert trade.closed_at is not None
+
+
+def test_sizing_correcto_en_cuenta_micro(user_with_config):
+    """
+    En una cuenta Micro (1 lote = 1.000 unidades, mínimo/paso 0.1, como
+    XM Micro) el motor debe dimensionar con las especificaciones REALES:
+    $10.000 al 1% = $100 / (30 pips × $0.10/pip) = 33.33 → 33.3 lotes.
+    Con el estándar (100.000 uds) habría calculado 0.33 — un error de 100x.
+    """
+    user_id = user_with_config
+
+    class MicroConnector(FakeConnector):
+        def get_symbol_specs(self, symbol):
+            return SymbolSpecs(contract_size=1_000, volume_min=0.1, volume_step=0.1)
+
+    connector = MicroConnector()
+    engine = TradingEngine(user_id, connector)
+    asyncio.run(engine.run_cycle())
+
+    with SessionLocal() as db:
+        trade = db.query(Trade).filter_by(user_id=user_id).one()
+        assert trade.lot_size == pytest.approx(33.3)
+        # El riesgo real respeta el 1%: 33.3 × 30 pips × $0.10 = $99.90.
+        assert trade.lot_size * 30 * 0.10 <= 100.0
 
 
 def test_reanuda_bots_habilitados_al_arrancar(user_with_config, monkeypatch):

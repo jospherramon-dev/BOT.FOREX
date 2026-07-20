@@ -1,0 +1,137 @@
+============================================================
+ BOT.FOREX — GUIA RAPIDA (guardar y consultar sin internet)
+============================================================
+
+Esta guia cubre todo lo del dia a dia. Los comandos son para
+la ventana negra: busque "cmd" o "Simbolo del sistema" en el
+menu de inicio (NO hace falta PowerShell).
+
+
+------------------------------------------------------------
+1. ARRANCAR TODO (lo normal, cada dia)
+------------------------------------------------------------
+Opcion A (recomendada): doble clic en
+    Desktop\BOT.FOREX\scripts\start_windows.bat
+Se abren 2 ventanas negras y el navegador solo. Esas 2
+ventanas deben quedarse abiertas mientras el bot trabaja.
+
+Opcion B (manual, si la A fallara). Ventana negra #1:
+    cd Desktop\BOT.FOREX\backend
+    .venv\Scripts\python.exe -m uvicorn app.main:app --port 8000
+Debe terminar diciendo: "Application startup complete."
+
+Ventana negra #2 (otra ventana, sin cerrar la primera):
+    cd Desktop\BOT.FOREX\frontend
+    npm run dev
+
+Navegador:  http://localhost:5173
+
+
+------------------------------------------------------------
+2. QUE TODO ARRANQUE SOLO AL VOLVER LA LUZ (una sola vez)
+------------------------------------------------------------
+Doble clic en:
+    Desktop\BOT.FOREX\scripts\instalar_autoarranque.bat
+Desde ese momento, cada vez que la PC encienda e inicie
+sesion en Windows, el bot completo arranca solo. Si el bot
+estaba activo antes del corte, se reanuda solo tambien.
+Para desactivarlo: quitar_autoarranque.bat
+
+Consejos para cortes de luz:
+- Configure el terminal MT5 para NO pedir contrasena al abrir
+  (que recuerde la cuenta) y dejelo en la bandeja del sistema.
+- Si su PC lo permite (BIOS), active "Power On after AC Loss"
+  para que la PC encienda sola al volver la corriente.
+- Las operaciones abiertas SIEMPRE estan protegidas: el Stop
+  Loss y el Take Profit viven en el servidor del broker, no en
+  su PC. Con la PC apagada siguen activos.
+
+
+------------------------------------------------------------
+3. OLVIDE MI CONTRASENA DEL DASHBOARD
+------------------------------------------------------------
+Ventana negra:
+    cd Desktop\BOT.FOREX\backend
+    .venv\Scripts\python.exe reset_password.py
+(le muestra los usuarios que existen)
+    .venv\Scripts\python.exe reset_password.py SU_USUARIO
+Escriba la contrasena nueva 2 veces (no se ve al escribir,
+es normal). Listo: entre al dashboard con la nueva.
+
+
+------------------------------------------------------------
+4. ERRORES FRECUENTES Y SU SOLUCION
+------------------------------------------------------------
+"Error de autenticacion" al entrar al dashboard
+  -> Casi siempre significa que el backend NO esta corriendo.
+     Abra http://localhost:8000/health en el navegador:
+     si no responde, arranque todo de nuevo (seccion 1).
+     Si la contrasena es realmente incorrecta, el mensaje
+     dice "Usuario o contrasena incorrectos" (seccion 3).
+
+"No module named uvicorn" (o similar)
+  -> Faltan paquetes en el entorno. Ventana negra:
+       cd Desktop\BOT.FOREX\backend
+       .venv\Scripts\python.exe -m pip install -r requirements.txt
+
+"Missing dependencies for SOCKS support" al instalar
+  -> Es por la VPN/proxy. Primero:
+       .venv\Scripts\python.exe -m pip install pysocks
+     y repita la instalacion. Si sigue, apague la VPN solo
+     mientras instala.
+
+Se abre el Bloc de notas en vez de ejecutarse algo
+  -> Estaba ejecutando un archivo .ps1 desde cmd. Use los
+     comandos de ESTA guia (no requieren activate).
+
+"(-10004, 'No IPC connection')" en la consola del bot
+  -> El terminal MT5 esta cerrado o sin conexion. Abra MT5.
+     El bot intenta reconectarse solo cada pocos ciclos.
+     (Si es fin de semana, el mercado esta cerrado: es normal
+     no ver velas nuevas.)
+
+El bot esta "ACTIVO" pero no abre operaciones
+  -> Normal. Evalua solo al cierre de cada vela (M15 = cada
+     15 min) y la estrategia exige condiciones especificas.
+     En backtest hubo ~1 operacion al dia en promedio.
+
+
+------------------------------------------------------------
+5. ACTUALIZAR EL BOT (cuando haya mejoras nuevas)
+------------------------------------------------------------
+Ventana negra:
+    cd Desktop\BOT.FOREX
+    git pull
+    cd backend
+    .venv\Scripts\python.exe -m pip install -r requirements.txt
+Cierre las ventanas del bot y arranquelo de nuevo (seccion 1).
+
+
+------------------------------------------------------------
+6. PRIMERA INSTALACION (solo en una PC nueva)
+------------------------------------------------------------
+Requisitos: Python 3.11+, Node.js LTS y Git instalados.
+    cd Desktop
+    git clone https://github.com/jospherramon-dev/BOT.FOREX.git
+    cd BOT.FOREX
+    git checkout claude/forex-trading-bot-build-nxaiqf
+    cd backend
+    python -m venv .venv
+    .venv\Scripts\python.exe -m pip install -r requirements.txt
+    .venv\Scripts\python.exe -m pip install MetaTrader5 pysocks
+    copy .env.example .env
+Edite .env con el Bloc de notas y ponga claves nuevas en
+SECRET_KEY y ENCRYPTION_KEY (genere cada una con):
+    python -c "import secrets; print(secrets.token_urlsafe(64))"
+    python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+Luego:
+    cd ..\frontend
+    npm install
+Y arranque todo (seccion 1).
+
+IMPORTANTE: si copia el proyecto a otra PC y quiere conservar
+sus datos (usuario, historial, configuracion), copie tambien
+el archivo backend\botforex.db y use el MISMO ENCRYPTION_KEY
+en el .env — sin esa clave, las credenciales del broker
+guardadas no se pueden descifrar.
+============================================================

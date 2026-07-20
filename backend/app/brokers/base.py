@@ -62,6 +62,24 @@ class ClosedTradeInfo:
 
 
 @dataclass(frozen=True)
+class SymbolSpecs:
+    """
+    Especificaciones REALES de trading para un símbolo en ESTA cuenta.
+
+    Existen porque el tamaño de 1 "lote" no es universal: en una cuenta
+    estándar 1 lote = 100.000 unidades, pero en cuentas Micro/Cent (muy
+    comunes para arrancar con poco capital, ej. XM Micro, Exness Cent)
+    puede ser 1.000 unidades o menos. Si el motor asumiera siempre el
+    estándar, el tamaño de lote calculado por `risk_manager.calc_lot_size`
+    quedaría mal por un factor de 10x-100x en esas cuentas.
+    """
+
+    contract_size: float   # unidades de la divisa base por 1.0 lote
+    volume_min: float      # lote mínimo operable
+    volume_step: float     # incremento mínimo entre lotes válidos
+
+
+@dataclass(frozen=True)
 class OpenPosition:
     ticket: str
     symbol: str
@@ -154,3 +172,12 @@ class BrokerConnector(ABC):
         motor estima los valores con el último precio conocido.
         """
         return None
+
+    def get_symbol_specs(self, symbol: str) -> SymbolSpecs:
+        """
+        Tamaño de contrato y lote mínimo/paso REALES de esta cuenta para
+        el símbolo dado. Los conectores que no puedan consultarlo (u
+        operen sobre un modelo sin lotes, como OANDA) devuelven el
+        estándar de la industria: 100.000 unidades, lote mínimo 0.01.
+        """
+        return SymbolSpecs(contract_size=100_000.0, volume_min=0.01, volume_step=0.01)

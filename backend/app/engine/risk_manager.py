@@ -21,7 +21,10 @@ from app.db.models import TradeStatus
 # Límites de lote estándar de la industria.
 MIN_LOT = 0.01
 MAX_LOT = 100.0
-UNITS_PER_LOT = 100_000  # 1 lote estándar
+#: Tamaño de contrato ESTÁNDAR (1 lote = 100.000 unidades). Las cuentas
+#: Micro/Cent usan otros valores (ej. XM Micro: 1.000) — el motor pasa el
+#: contract_size real consultado al broker vía get_symbol_specs().
+UNITS_PER_LOT = 100_000
 
 
 # ---------------------------------------------------------------------------
@@ -76,12 +79,17 @@ def calc_sl_tp(
 # Tamaño de lote dinámico
 # ---------------------------------------------------------------------------
 def pip_value_per_lot(symbol: str, pip_size: float, price: float,
-                      account_currency: str = "USD") -> float:
+                      account_currency: str = "USD",
+                      contract_size: float = UNITS_PER_LOT) -> float:
     """
-    Valor monetario de 1 pip por lote estándar, en la divisa de la cuenta.
+    Valor monetario de 1 pip por lote, en la divisa de la cuenta.
+
+    `contract_size` es el tamaño REAL de 1 lote en esta cuenta (100.000 en
+    estándar; 1.000 en XM Micro; etc.) — en una cuenta Micro el pip vale
+    ~$0.10/lote en EURUSD, no $10.
 
     - Divisa cotizada == divisa de cuenta (EURUSD con cuenta USD):
-      valor exacto = pip_size × 100.000 (≈ $10/pip).
+      valor exacto = pip_size × contract_size.
     - Divisa base == divisa de cuenta (USDJPY con cuenta USD):
       se divide por el precio actual.
     - Cruces (EURGBP con cuenta USD): APROXIMACIÓN dividiendo por el precio;
@@ -91,10 +99,10 @@ def pip_value_per_lot(symbol: str, pip_size: float, price: float,
     base_currency = symbol[:3]
 
     if quote_currency == account_currency:
-        return pip_size * UNITS_PER_LOT
+        return pip_size * contract_size
     if base_currency == account_currency:
-        return pip_size * UNITS_PER_LOT / price
-    return pip_size * UNITS_PER_LOT / price  # aproximación para cruces
+        return pip_size * contract_size / price
+    return pip_size * contract_size / price  # aproximación para cruces
 
 
 def calc_lot_size(
@@ -102,6 +110,8 @@ def calc_lot_size(
     risk_pct: float,
     stop_loss_pips: float,
     pip_value: float,
+    volume_min: float = MIN_LOT,
+    volume_step: float = MIN_LOT,
 ) -> float:
     """
     Lote tal que, si salta el SL, la pérdida ≈ `risk_pct` % del balance.
@@ -109,16 +119,24 @@ def calc_lot_size(
         riesgo_monetario = balance × riesgo% / 100
         lote = riesgo_monetario / (SL_pips × valor_pip_por_lote)
 
-    El resultado se TRUNCA (no redondea) a 2 decimales para nunca exceder
-    el riesgo configurado, y se acota a [MIN_LOT, MAX_LOT].
+    El resultado se TRUNCA (no redondea) al `volume_step` de la cuenta
+    para nunca exceder el riesgo configurado, y se acota al rango
+    [volume_min, MAX_LOT]. `volume_min`/`volume_step` vienen de las
+    especificaciones reales del símbolo (ej. XM Micro: mínimo 0.1,
+    paso 0.1) — con los defaults se conserva el comportamiento estándar
+    (mínimo 0.01, truncado a 2 decimales).
     """
     if stop_loss_pips <= 0 or pip_value <= 0:
         raise ValueError("SL en pips y valor del pip deben ser positivos")
+    if volume_min <= 0 or volume_step <= 0:
+        raise ValueError("volume_min y volume_step deben ser positivos")
 
     risk_amount = account_balance * risk_pct / 100.0
     raw_lot = risk_amount / (stop_loss_pips * pip_value)
-    lot = math.floor(raw_lot * 100) / 100  # truncar a 2 decimales
-    return max(MIN_LOT, min(MAX_LOT, lot))
+    # Truncar al paso de la cuenta (+epsilon contra errores de coma flotante).
+    lot = math.floor(raw_lot / volume_step + 1e-9) * volume_step
+    lot = round(lot, 6)
+    return max(volume_min, min(MAX_LOT, lot))
 
 
 # ---------------------------------------------------------------------------

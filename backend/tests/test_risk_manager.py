@@ -57,6 +57,36 @@ def test_pip_value_usd_base():
 
 
 # ---------------------------------------------------------------------------
+# Cuentas Micro/Cent (contract_size ≠ 100.000)
+# ---------------------------------------------------------------------------
+def test_pip_value_cuenta_micro():
+    # XM Micro: 1 lote = 1.000 unidades → EURUSD vale $0.10/pip por lote.
+    value = rm.pip_value_per_lot("EURUSD", 0.0001, 1.10, contract_size=1_000)
+    assert value == pytest.approx(0.10)
+
+
+def test_lote_micro_con_cuenta_pequena():
+    # $50 al 1% = $0.50 de riesgo. SL 30 pips a $0.10/pip (micro) →
+    # raw 0.1667 lotes; con paso 0.1 (XM Micro) se trunca a 0.1.
+    lot = rm.calc_lot_size(50, 1.0, 30, 0.10, volume_min=0.1, volume_step=0.1)
+    assert lot == pytest.approx(0.1)
+    # La pérdida potencial (0.1 × 30 × $0.10 = $0.30) respeta el riesgo.
+    assert lot * 30 * 0.10 <= 0.50
+
+
+def test_lote_micro_respeta_minimo_de_cuenta():
+    # Cuenta minúscula: el mínimo de la cuenta manda aunque exceda el riesgo.
+    lot = rm.calc_lot_size(5, 1.0, 30, 0.10, volume_min=0.1, volume_step=0.1)
+    assert lot == pytest.approx(0.1)
+
+
+def test_lote_trunca_al_paso_de_la_cuenta():
+    # raw = 100 / (30 × 0.10) = 33.33; con paso 0.1 → 33.3 exacto.
+    lot = rm.calc_lot_size(10_000, 1.0, 30, 0.10, volume_min=0.1, volume_step=0.1)
+    assert lot == pytest.approx(33.3)
+
+
+# ---------------------------------------------------------------------------
 # Break-even y trailing
 # ---------------------------------------------------------------------------
 def test_break_even_no_aplica_antes_del_trigger():

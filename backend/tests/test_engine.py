@@ -20,6 +20,7 @@ from app.brokers.base import (
     ClosedTradeInfo,
     OpenPosition,
     OrderResult,
+    SymbolSpecs,
     TickPrice,
 )
 from app.db.database import SessionLocal, init_db
@@ -192,6 +193,81 @@ def test_ciclo_completo_apertura_breakeven_cierre(user_with_config):
         assert trade.profit == pytest.approx(198.0)
         assert trade.profit_pips == pytest.approx(60, abs=1.5)
         assert trade.closed_at is not None
+
+
+def test_sizing_correcto_en_cuenta_micro(user_with_config):
+    """
+    En una cuenta Micro (1 lote = 1.000 unidades, mínimo/paso 0.1, como
+    XM Micro) el motor debe dimensionar con las especificaciones REALES:
+    $10.000 al 1% = $100 / (30 pips × $0.10/pip) = 33.33 → 33.3 lotes.
+    Con el estándar (100.000 uds) habría calculado 0.33 — un error de 100x.
+    """
+    user_id = user_with_config
+
+    class MicroConnector(FakeConnector):
+        def get_symbol_specs(self, symbol):
+            return SymbolSpecs(contract_size=1_000, volume_min=0.1, volume_step=0.1)
+
+    connector = MicroConnector()
+    engine = TradingEngine(user_id, connector)
+    asyncio.run(engine.run_cycle())
+
+    with SessionLocal() as db:
+        trade = db.query(Trade).filter_by(user_id=user_id).one()
+        assert trade.lot_size == pytest.approx(33.3)
+        # El riesgo real respeta el 1%: 33.3 × 30 pips × $0.10 = $99.90.
+        assert trade.lot_size * 30 * 0.10 <= 100.0
+
+
+def test_reanuda_bots_habilitados_al_arrancar(user_with_config, monkeypatch):
+    """
+    Tras un corte de luz, bot_enabled sigue en True en la BD: al arrancar
+    el servidor, resume_enabled_bots debe reconectar el broker y relanzar
+    el motor sin intervención del usuario.
+    """
+    from app.core.security import encrypt_secret
+    from app.db.models import BrokerCredential, BrokerType
+    from app.engine import trading_engine as te
+
+    user_id = user_with_config
+    with SessionLocal() as db:
+        db.add(BrokerCredential(
+            user_id=user_id,
+            broker_type=BrokerType.OANDA,
+            encrypted_api_key=encrypt_secret("clave-fake"),
+            account_id="101-001-000000-001",
+            is_demo=True,
+        ))
+        db.commit()
+
+    fake = FakeConnector()
+    monkeypatch.setattr("app.brokers.factory.create_connector", lambda cred: fake)
+
+    async def _flow():
+        resumed = await te.resume_enabled_bots()
+        engine = te.get_engine(user_id)
+        running = engine is not None and engine.is_running
+        await te.stop_engine(user_id)
+        return resumed, running
+
+    resumed, running = asyncio.run(_flow())
+    assert resumed == 1
+    assert running is True
+    assert fake.connect_calls == 1
+
+    with SessionLocal() as db:
+        db.query(BrokerCredential).filter_by(user_id=user_id).delete()
+        db.commit()
+
+
+def test_sqlite_endurecido_contra_cortes():
+    """La BD debe operar en WAL con synchronous=FULL (durabilidad ante cortes)."""
+    from app.db.database import engine as db_engine
+
+    with db_engine.connect() as conn:
+        assert conn.exec_driver_sql("PRAGMA journal_mode").scalar() == "wal"
+        # synchronous: 2 = FULL
+        assert conn.exec_driver_sql("PRAGMA synchronous").scalar() == 2
 
 
 def test_reconexion_automatica_tras_fallos_de_datos(user_with_config):

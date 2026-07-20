@@ -12,14 +12,32 @@ handshake WebSocket, así que el JWT viaja como query param:
 import logging
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from sqlalchemy import select
 
 from app.core.events import event_bus
 from app.core.logger import live_log_buffer
 from app.core.security import decode_access_token
+from app.db.database import SessionLocal
+from app.db.models import SystemLog
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Tiempo real"])
+
+
+def _persisted_logs(user_id: int, limit: int = 100) -> list[dict]:
+    """Últimos logs guardados en BD (sobreviven reinicios y cortes de luz)."""
+    with SessionLocal() as db:
+        rows = db.scalars(
+            select(SystemLog)
+            .where((SystemLog.user_id == user_id) | (SystemLog.user_id.is_(None)))
+            .order_by(SystemLog.created_at.desc())
+            .limit(limit)
+        ).all()
+    return [
+        {"timestamp": r.created_at.isoformat(), "level": r.level, "message": r.message}
+        for r in reversed(rows)
+    ]
 
 
 @router.websocket("/ws/live")
@@ -36,10 +54,13 @@ async def live_stream(websocket: WebSocket, token: str = "") -> None:
     logger.info("Cliente WebSocket conectado (usuario %s)", user_id)
 
     try:
-        # Snapshot inicial: últimos logs para poblar la consola al conectar.
-        await websocket.send_json(
-            {"type": "snapshot", "payload": {"logs": list(live_log_buffer)}}
-        )
+        # Snapshot inicial de la consola: el buffer en memoria si tiene
+        # historia; si el servidor acaba de reiniciar (p. ej. tras un corte
+        # de luz), se repuebla desde system_logs en la base de datos.
+        logs = list(live_log_buffer)
+        if len(logs) < 10:
+            logs = _persisted_logs(int(user_id)) or logs
+        await websocket.send_json({"type": "snapshot", "payload": {"logs": logs}})
         while True:
             event = await queue.get()
             await websocket.send_json(event)

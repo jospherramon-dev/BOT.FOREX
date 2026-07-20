@@ -86,11 +86,18 @@ async def test_telegram(db: DBSession, current_user: CurrentUser) -> TelegramTes
 
     try:
         token = decrypt_secret(config.encrypted_telegram_token)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Token indescifrable: vuelva a guardarlo",
-        ) from exc
+    except ValueError:
+        return TelegramTestResult(
+            success=False,
+            message=(
+                "El token guardado no se pudo descifrar (¿cambió la "
+                "ENCRYPTION_KEY del .env?). Vuelva a guardar el token."
+            ),
+        )
 
-    result = await telegram_service.test_connection(token, config.telegram_chat_id)
+    try:
+        result = await telegram_service.test_connection(token, config.telegram_chat_id)
+    except Exception as exc:  # noqa: BLE001 — nunca un 500 sin explicación
+        logger.exception("Test de Telegram falló inesperadamente")
+        return TelegramTestResult(success=False, message=f"Error inesperado: {exc}")
     return TelegramTestResult(**result)

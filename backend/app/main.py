@@ -17,6 +17,7 @@ from app.api.routes import assets, auth, backtest, bot, broker, telegram, ws
 from app.core.config import settings
 from app.core.logger import setup_logging
 from app.db.database import init_db
+from app.engine.trading_engine import resume_enabled_bots
 from app.notifications.telegram_service import notifier
 
 logger = logging.getLogger(__name__)
@@ -28,6 +29,13 @@ async def lifespan(app: FastAPI):
     setup_logging()
     init_db()
     await notifier.start()  # Módulo D: escucha el event_bus
+    # Tras un corte de luz/reinicio, relanza los bots que quedaron activos.
+    try:
+        resumed = await resume_enabled_bots()
+        if resumed:
+            logger.info("Bots reanudados automáticamente: %s", resumed)
+    except Exception:  # noqa: BLE001 — el arranque de la API nunca se bloquea
+        logger.exception("Error reanudando bots al arrancar")
     logger.info("%s iniciado | entorno=%s", settings.APP_NAME, settings.ENVIRONMENT)
     yield
     await notifier.stop()

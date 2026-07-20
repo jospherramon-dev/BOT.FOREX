@@ -86,6 +86,7 @@ def _apply_micro_migrations() -> None:
 
     statements = [
         "ALTER TABLE bot_configs ADD COLUMN strategy_params_json TEXT DEFAULT '{}'",
+        "ALTER TABLE broker_credentials ADD COLUMN terminal_path VARCHAR(500)",
     ]
     with engine.connect() as conn:
         for stmt in statements:

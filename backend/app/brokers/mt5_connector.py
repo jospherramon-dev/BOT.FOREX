@@ -52,25 +52,49 @@ class MT5Connector(BrokerConnector):
 
     name = "MT5"
 
-    def __init__(self, login: int, password: str, server: str) -> None:
+    def __init__(
+        self, login: int, password: str, server: str, terminal_path: str | None = None
+    ) -> None:
         self._login = login
         self._password = password
         self._server = server
+        # Ruta al terminal.exe de ESTE broker. Necesario cuando la PC tiene
+        # varios terminales MT5 instalados (uno por broker): sin esto,
+        # mt5.initialize() se conecta al que Windows tenga registrado
+        # como predeterminado, que puede no reconocer el servidor pedido.
+        self._terminal_path = terminal_path or None
         self._connected = False
 
     # --- Ciclo de vida --------------------------------------------------
     def connect(self) -> bool:
         if not MT5_AVAILABLE:
-            logger.error(
+            self.last_error = (
                 "El paquete MetaTrader5 no está instalado (solo Windows). "
                 "Use OANDA o instale MT5 en un host Windows."
             )
+            logger.error(self.last_error)
             return False
 
-        if not mt5.initialize(
-            login=self._login, password=self._password, server=self._server
-        ):
-            logger.error("MT5 initialize() falló: %s", mt5.last_error())
+        init_kwargs = {
+            "login": self._login,
+            "password": self._password,
+            "server": self._server,
+        }
+        if self._terminal_path:
+            init_kwargs["path"] = self._terminal_path
+
+        if not mt5.initialize(**init_kwargs):
+            code, description = mt5.last_error()
+            self.last_error = (
+                f"MT5 rechazó la conexión: ({code}) {description}. Causas "
+                "frecuentes: el nombre del servidor no coincide EXACTO con "
+                "el de su cuenta (revíselo en MT5: clic derecho sobre la "
+                "cuenta en el Navegador → Propiedades), usó la contraseña "
+                "de INVERSOR en vez de la de TRADER/principal, o esta PC "
+                "tiene instalado el terminal de OTRO broker como MT5 "
+                "predeterminado."
+            )
+            logger.error(self.last_error)
             return False
 
         self._connected = True

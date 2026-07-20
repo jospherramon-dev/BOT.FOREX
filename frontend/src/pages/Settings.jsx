@@ -60,7 +60,7 @@ function BrokerTab() {
   const [creds, setCreds] = useState([]);
   const [form, setForm] = useState({
     broker_type: 'OANDA', label: 'Mi cuenta', login: '', password: '',
-    api_key: '', server: '', account_id: '', is_demo: true,
+    api_key: '', server: '', account_id: '', is_demo: true, terminal_path: '',
   });
   const [testResult, setTestResult] = useState({});
   const [busy, setBusy] = useState(false);
@@ -136,7 +136,24 @@ function BrokerTab() {
               </div>
               <div className="col-span-2">
                 <label className="label">Servidor</label>
-                <input className="input" placeholder="Pepperstone-Demo" value={form.server} onChange={set('server')} required />
+                <input className="input" placeholder="XMGlobal-MT5 7" value={form.server} onChange={set('server')} required />
+                <p className="mt-1 text-xs text-term-muted">
+                  Debe coincidir EXACTO con el de su cuenta en MT5 (clic derecho
+                  sobre la cuenta en el Navegador → Propiedades).
+                </p>
+              </div>
+              <div className="col-span-2">
+                <label className="label">Ruta del terminal (opcional)</label>
+                <input
+                  className="input"
+                  placeholder="C:\Program Files\XM MT5\terminal64.exe"
+                  value={form.terminal_path}
+                  onChange={set('terminal_path')}
+                />
+                <p className="mt-1 text-xs text-term-muted">
+                  Sólo si tiene VARIOS terminales MT5 instalados (ej. XM e IC
+                  Markets). Indica cuál usar para esta cuenta.
+                </p>
               </div>
             </div>
           ) : (

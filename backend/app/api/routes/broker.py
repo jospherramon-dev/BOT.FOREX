@@ -81,6 +81,7 @@ def save_credentials(
         server=payload.server,
         account_id=payload.account_id,
         is_demo=payload.is_demo,
+        terminal_path=payload.terminal_path or None,
     )
     db.add(cred)
     db.commit()
@@ -156,10 +157,12 @@ async def test_connection(
     def _probe() -> ConnectionTestResult:
         try:
             if not connector.connect():
-                return ConnectionTestResult(
-                    success=False,
-                    message="No se pudo conectar: verifique credenciales y servidor.",
+                # last_error trae el código/mensaje real del broker (MT5) en
+                # vez de un mensaje genérico — así el usuario ve la causa.
+                detail = connector.last_error or (
+                    "No se pudo conectar: verifique credenciales y servidor."
                 )
+                return ConnectionTestResult(success=False, message=detail)
             info = connector.get_account_info()
             return ConnectionTestResult(
                 success=True,

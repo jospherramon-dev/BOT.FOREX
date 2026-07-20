@@ -106,6 +106,9 @@ class BrokerCredential(Base):
     encrypted_api_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     server: Mapped[str | None] = mapped_column(String(120), nullable=True)
     account_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    # MT5: ruta al terminal.exe de este broker (opcional). Necesaria si hay
+    # varios terminales MT5 instalados en la PC (uno por broker).
+    terminal_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     is_demo: Mapped[bool] = mapped_column(Boolean, default=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

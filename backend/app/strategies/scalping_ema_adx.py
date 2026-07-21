@@ -137,6 +137,13 @@ class ScalpingEmaAdxStrategy(BaseStrategy):
             "require_adx_rising": 0,  # 1 = exigir ADX subiendo respecto a la vela previa
             "require_candle_confirm": 1,  # 1 = la vela de cruce debe CERRAR más allá de la EMA lenta
             "di_min_gap": 0.0,        # separación mínima +DI/-DI (manual sugiere >3)
+            # --- Salidas técnicas opcionales del manual (0 = desactivadas) ----
+            # Regla 5.4: cerrar si el ADX cae por debajo de este valor (fuerza
+            # de tendencia agotada). El manual usa 20. 0 = no cerrar por ADX.
+            "exit_adx_below": 0.0,
+            # Regla 5.3 (trailing por EMA9): cerrar si una vela cierra del lado
+            # CONTRARIO a la EMA rápida (la tendencia corta se dio vuelta).
+            "exit_on_ema_fast_flip": 0,
             # --- Filtro de sesión (hora del BROKER; 0..24 = desactivado) ------
             "session_start_hour": 0,
             "session_end_hour": 24,
@@ -240,6 +247,35 @@ class ScalpingEmaAdxStrategy(BaseStrategy):
             reason="Sin cruce válido con fuerza ADX suficiente",
             metadata=metadata,
         )
+
+    # -- Salida técnica (reglas 5.3/5.4 del manual) ------------------------
+    def check_exit(self, df, symbol: str, direction: str) -> bool:
+        """Cierre por debilidad del ADX o por vuelta bajo/sobre la EMA rápida."""
+        p = self.params
+        exit_adx = float(p["exit_adx_below"])
+        flip = bool(int(p["exit_on_ema_fast_flip"]))
+        if exit_adx <= 0 and not flip:
+            return False  # ninguna salida técnica activada
+
+        self.validate_data(df)
+        close = df["close"]
+
+        # Salida 5.4: la fuerza de la tendencia se disolvió.
+        if exit_adx > 0:
+            adx_line, _, _ = adx(df["high"], df["low"], close, int(p["adx_period"]))
+            if float(adx_line.iloc[-1]) < exit_adx:
+                return True
+
+        # Salida 5.3: el precio cerró del lado contrario a la EMA rápida.
+        if flip:
+            curr_close = float(close.iloc[-1])
+            curr_fast = float(ema(close, int(p["ema_fast"])).iloc[-1])
+            if direction.upper() == "BUY" and curr_close < curr_fast:
+                return True
+            if direction.upper() == "SELL" and curr_close > curr_fast:
+                return True
+
+        return False
 
     # -- Filtro de sesión --------------------------------------------------
     def _within_session(self, ts) -> bool:

@@ -105,6 +105,37 @@ def test_umbral_adx_alto_bloquea_todas_las_senales():
     assert SignalType.SELL not in signals
 
 
+def test_salida_desactivada_por_defecto():
+    # Sin parámetros de salida, check_exit siempre devuelve False (las
+    # posiciones viven hasta SL/TP/break-even/trailing).
+    strategy = get_strategy("scalping_ema_adx")
+    df = make_ohlcv(list(1.1000 + np.linspace(0, 0.02, 200)))
+    assert strategy.check_exit(df, "EURUSD", "BUY") is False
+
+
+def test_salida_por_adx_debil():
+    # Mercado plano → ADX bajo. Con exit_adx_below alto, check_exit pide cerrar.
+    rng = np.random.default_rng(4)
+    flat = list(1.1000 + rng.normal(0, 0.0002, 250))
+    df = make_ohlcv(flat)
+    fuerte = get_strategy("scalping_ema_adx", {"exit_adx_below": 90})
+    assert fuerte.check_exit(df, "EURUSD", "BUY") is True
+    apagado = get_strategy("scalping_ema_adx", {"exit_adx_below": 0})
+    assert apagado.check_exit(df, "EURUSD", "BUY") is False
+
+
+def test_salida_por_cruce_de_ema_rapida():
+    # Subida y luego caída fuerte al final: el último cierre queda por DEBAJO
+    # de la EMA rápida → una posición BUY debe cerrarse; una SELL no.
+    closes = list(1.1000 + np.linspace(0, 0.0150, 200)) + list(
+        np.linspace(1.1150, 1.1080, 20)
+    )
+    df = make_ohlcv(closes)
+    strat = get_strategy("scalping_ema_adx", {"exit_on_ema_fast_flip": 1})
+    assert strat.check_exit(df, "EURUSD", "BUY") is True
+    assert strat.check_exit(df, "EURUSD", "SELL") is False
+
+
 def test_filtro_de_sesion_bloquea_fuera_de_horario():
     # La misma tendencia que compra a las 10:00 no debe generar señal si la
     # ventana de sesión es 08–09 (todas las velas caen fuera).

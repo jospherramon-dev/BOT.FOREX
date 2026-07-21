@@ -158,6 +158,19 @@ class Backtester:
                 else:
                     self._apply_stop_management(open_trade, float(candle["close"]))
 
+            # 1b) Salida técnica de la estrategia (reglas 5.3/5.4): si sobrevivió
+            # a SL/TP pero la estrategia pide cerrar, se cierra al precio de cierre.
+            if open_trade is not None:
+                exit_win = self.df.iloc[max(0, i - self._window): i + 1]
+                if self.strategy.check_exit(exit_win, p.symbol, open_trade.direction):
+                    self._close_trade(
+                        open_trade, float(candle["close"]), when,
+                        TradeStatus.CLOSED_MANUAL.value,
+                    )
+                    balance += open_trade.profit
+                    trades.append(open_trade)
+                    open_trade = None
+
             # -- Freno de drawdown: ¿debe pausar la apertura de operaciones? --
             trading_allowed = True
             if p.max_drawdown_pct > 0:

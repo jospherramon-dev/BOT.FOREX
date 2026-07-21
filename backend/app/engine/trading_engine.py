@@ -202,11 +202,61 @@ class TradingEngine:
 
         for trade in open_trades:
             if trade.broker_ticket in broker_positions:
+                if await self._maybe_strategy_exit(db, config, trade):
+                    continue  # ya cerrada por la estrategia
                 await self._adjust_stops(db, config, trade,
                                          broker_positions[trade.broker_ticket])
             else:
                 await self._register_close(db, trade)
         db.commit()
+
+    async def _maybe_strategy_exit(self, db, config: BotConfig, trade: Trade) -> bool:
+        """
+        Salida técnica de la estrategia (reglas 5.3/5.4 del manual EMA+ADX):
+        si `check_exit` pide cerrar, envía el cierre al broker y registra la
+        operación. Devuelve True si la posición se cerró.
+        """
+        asset = db.scalar(
+            select(Asset).where(
+                Asset.user_id == self.user_id, Asset.symbol == trade.symbol
+            )
+        )
+        if asset is None:
+            return False
+
+        strategy = get_strategy(config.strategy_name, config.strategy_params)
+        tf_minutes = _TIMEFRAME_MINUTES[asset.timeframe]
+        date_to = datetime.now(timezone.utc)
+        date_from = date_to - timedelta(minutes=tf_minutes * HISTORY_BARS)
+        try:
+            df = await asyncio.to_thread(
+                self.connector.get_historical_data,
+                asset.symbol, asset.timeframe, date_from, date_to,
+            )
+        except Exception:  # noqa: BLE001 — sin velas, deja que SL/TP gestionen
+            return False
+        if len(df) < strategy.min_bars:
+            return False
+        if not strategy.check_exit(df, trade.symbol, trade.direction.value):
+            return False
+
+        result = await asyncio.to_thread(
+            self.connector.close_position, trade.broker_ticket
+        )
+        if not result.success:
+            await self._log(
+                "WARNING",
+                f"Salida técnica de {trade.symbol} rechazada: {result.message}",
+            )
+            return False
+
+        await self._log(
+            "INFO",
+            f"Salida técnica de la estrategia en {trade.symbol} "
+            f"({trade.direction.value}): condición de cierre cumplida.",
+        )
+        await self._register_close(db, trade)
+        return True
 
     async def _adjust_stops(
         self, db, config: BotConfig, trade: Trade, position: OpenPosition

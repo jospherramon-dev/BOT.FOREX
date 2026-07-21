@@ -125,6 +125,32 @@ class AlwaysBuyBtStrategy(BaseStrategy):
 STRATEGY_REGISTRY[AlwaysBuyBtStrategy.name] = AlwaysBuyBtStrategy
 
 
+class BuyThenExitStrategy(BaseStrategy):
+    """Compra una vez y, unas velas después, pide salir por check_exit."""
+
+    name = "test_buy_then_exit"
+    min_bars = 5
+
+    def __init__(self, params=None):
+        super().__init__(params)
+        self._fired = False
+        self._bars_open = 0
+
+    def calculate_signal(self, df: pd.DataFrame, symbol: str) -> Signal:
+        if not self._fired:
+            self._fired = True
+            return Signal(type=SignalType.BUY, symbol=symbol, reason="test")
+        return Signal(type=SignalType.HOLD, symbol=symbol)
+
+    def check_exit(self, df: pd.DataFrame, symbol: str, direction: str) -> bool:
+        # Cierra a la tercera vela evaluada tras abrir.
+        self._bars_open += 1
+        return self._bars_open >= 3
+
+
+STRATEGY_REGISTRY[BuyThenExitStrategy.name] = BuyThenExitStrategy
+
+
 def _df_from_closes(closes: list[float]) -> pd.DataFrame:
     """Velas sintéticas con rango high/low de ±2 pips alrededor del cierre."""
     arr = np.asarray(closes)
@@ -282,6 +308,27 @@ def test_sl_por_atr_dimensiona_el_stop():
     assert sl_pips < 30            # mucho menor que el SL fijo → viene del ATR
     assert 3 < sl_pips < 12        # ~6 pips (ATR ~4 × 1.5)
     assert tp_pips == pytest.approx(sl_pips * 2.0, rel=0.02)  # R:R 1:2
+
+
+def test_salida_tecnica_de_estrategia_cierra_posicion():
+    """
+    Una estrategia que pide salir por check_exit debe cerrar la posición
+    ANTES de que toque SL o TP, con estado manual (salida discrecional).
+    """
+    # Precio que sube suave: sin la salida técnica no tocaría SL ni TP pronto.
+    closes = [1.1000] * 6 + list(np.linspace(1.10005, 1.10080, 20))
+    df = _df_from_closes(closes)
+    result = Backtester(
+        df, _base_params(strategy_name="test_buy_then_exit",
+                         stop_loss_pips=50, take_profit_pips=100),
+    ).run()
+
+    assert len(result.trades) == 1
+    t = result.trades[0]
+    assert t.status == "CLOSED_MANUAL"        # cerrada por la estrategia
+    assert t.exit_price is not None
+    # Salió a mitad de camino, sin tocar SL (1.0950) ni TP (1.1100).
+    assert 1.1000 < t.exit_price < 1.1010
 
 
 def test_freno_drawdown_desactivado_por_defecto():

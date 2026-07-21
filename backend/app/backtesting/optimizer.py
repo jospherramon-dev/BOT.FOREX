@@ -196,6 +196,8 @@ def run_job(
                 break_even_trigger_pips=combo["break_even_trigger_pips"],
                 trailing_stop_enabled=base.trailing_stop_enabled,
                 trailing_stop_pips=base.trailing_stop_pips,
+                max_drawdown_pct=base.max_drawdown_pct,
+                drawdown_cooldown_bars=base.drawdown_cooldown_bars,
             )
             metrics = _simulate(df_train, params)
             validation = _simulate(df_valid, params) if df_valid is not None else None

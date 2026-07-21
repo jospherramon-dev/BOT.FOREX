@@ -159,6 +159,11 @@ class BotConfig(Base):
     trailing_stop_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     trailing_stop_pips: Mapped[float] = mapped_column(Float, default=15.0)
     max_open_trades: Mapped[int] = mapped_column(Integer, default=3)
+    # Freno de drawdown en vivo: si la equity cae este % desde su máximo, el
+    # motor deja de abrir operaciones nuevas durante drawdown_cooldown_hours.
+    # 0 = desactivado.
+    max_drawdown_pct: Mapped[float] = mapped_column(Float, default=0.0)
+    drawdown_cooldown_hours: Mapped[float] = mapped_column(Float, default=48.0)
     bot_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
 
     # Notificaciones Telegram (Módulo D) — token cifrado con Fernet.

@@ -37,6 +37,9 @@ class BacktestRequest(BaseModel):
     break_even_trigger_pips: float = Field(default=20.0, gt=0)
     trailing_stop_enabled: bool = False
     trailing_stop_pips: float = Field(default=15.0, gt=0)
+    # Freno de drawdown (0 = desactivado).
+    max_drawdown_pct: float = Field(default=0.0, ge=0, le=90)
+    drawdown_cooldown_bars: int = Field(default=480, ge=1, le=100_000)
 
 
 class OptimizationRequest(BaseModel):
@@ -65,6 +68,9 @@ class OptimizationRequest(BaseModel):
     break_even_trigger_pips: float = Field(default=20.0, gt=0)
     trailing_stop_enabled: bool = False
     trailing_stop_pips: float = Field(default=15.0, gt=0)
+    # Freno de drawdown (0 = desactivado), común a todas las combinaciones.
+    max_drawdown_pct: float = Field(default=0.0, ge=0, le=90)
+    drawdown_cooldown_bars: int = Field(default=480, ge=1, le=100_000)
 
     # Ejes de barrido.
     stop_loss_grid: list[float] = Field(default_factory=list)

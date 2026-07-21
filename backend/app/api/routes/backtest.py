@@ -156,6 +156,8 @@ async def run_backtest(
             break_even_trigger_pips=payload.break_even_trigger_pips,
             trailing_stop_enabled=payload.trailing_stop_enabled,
             trailing_stop_pips=payload.trailing_stop_pips,
+            max_drawdown_pct=payload.max_drawdown_pct,
+            drawdown_cooldown_bars=payload.drawdown_cooldown_bars,
         )
         backtester = Backtester(df, params)
         if len(df) <= backtester.strategy.min_bars:
@@ -296,6 +298,8 @@ async def start_optimization(
         break_even_trigger_pips=payload.break_even_trigger_pips,
         trailing_stop_enabled=payload.trailing_stop_enabled,
         trailing_stop_pips=payload.trailing_stop_pips,
+        max_drawdown_pct=payload.max_drawdown_pct,
+        drawdown_cooldown_bars=payload.drawdown_cooldown_bars,
     )
 
     job = optimizer.create_job(

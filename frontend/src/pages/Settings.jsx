@@ -339,6 +339,8 @@ const RISK_FIELDS = [
   ['break_even_trigger_pips', 'Disparo break-even (pips)', 1],
   ['trailing_stop_pips', 'Trailing stop (pips)', 1],
   ['max_open_trades', 'Máx. operaciones abiertas', 1],
+  ['max_drawdown_pct', 'Freno drawdown % (0=off)', 1],
+  ['drawdown_cooldown_hours', 'Enfriamiento freno (horas)', 1],
 ];
 
 function RiskTab() {

@@ -65,6 +65,9 @@ class TradingEngine:
         self._data_failures = 0
         # Último mensaje persistido (evita llenar la BD con warnings repetidos).
         self._last_persisted_msg = ""
+        # Estado del freno de drawdown en vivo.
+        self._peak_equity: float | None = None
+        self._paused_until: datetime | None = None
 
     # ------------------------------------------------------------------
     # Ciclo de vida
@@ -116,6 +119,10 @@ class TradingEngine:
             await self._manage_open_positions(db, config)
             await self._publish_account_snapshot()
 
+            # Freno de drawdown: si está activo y pausado, no abrir nuevas.
+            if not await self._drawdown_allows_trading(config):
+                return
+
             open_count = self._count_open_trades(db)
             assets = db.scalars(
                 select(Asset).where(
@@ -128,6 +135,51 @@ class TradingEngine:
                     break
                 if await self._evaluate_asset(db, config, asset):
                     open_count += 1
+
+    async def _drawdown_allows_trading(self, config: BotConfig) -> bool:
+        """
+        Freno de drawdown en vivo (mismo principio que en el backtest).
+
+        Sigue el pico de equity de la cuenta; si cae más de max_drawdown_pct
+        desde ese pico, pausa la apertura de operaciones nuevas durante
+        drawdown_cooldown_hours y reinicia la referencia al reanudar. Las
+        posiciones ya abiertas se siguen gestionando con normalidad (su
+        SL/TP las protege).
+        """
+        if config.max_drawdown_pct <= 0:
+            return True
+
+        now = datetime.now(timezone.utc)
+        if self._paused_until is not None:
+            if now < self._paused_until:
+                return False
+            # Fin del enfriamiento: reanuda midiendo desde el balance actual.
+            self._paused_until = None
+            self._peak_equity = None
+            await self._log("INFO", "Freno de drawdown: enfriamiento terminado, "
+                                    "reanudando la apertura de operaciones.")
+
+        try:
+            info = await asyncio.to_thread(self.connector.get_account_info)
+        except Exception:  # noqa: BLE001 — sin datos de cuenta, no bloquea
+            return True
+
+        if self._peak_equity is None or info.equity > self._peak_equity:
+            self._peak_equity = info.equity
+        drawdown = (
+            (self._peak_equity - info.equity) / self._peak_equity
+            if self._peak_equity > 0 else 0.0
+        )
+        if drawdown * 100 >= config.max_drawdown_pct:
+            self._paused_until = now + timedelta(hours=config.drawdown_cooldown_hours)
+            await self._log(
+                "WARNING",
+                f"FRENO DE DRAWDOWN activado: caída de {drawdown * 100:.1f}% "
+                f"desde el máximo. Se pausan las entradas por "
+                f"{config.drawdown_cooldown_hours:.0f}h.",
+            )
+            return False
+        return True
 
     # ------------------------------------------------------------------
     # 1) Supervisión de posiciones abiertas

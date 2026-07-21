@@ -43,6 +43,9 @@ class BotConfigIn(BaseModel):
     trailing_stop_enabled: bool = False
     trailing_stop_pips: float = Field(default=15.0, gt=0)
     max_open_trades: int = Field(default=3, ge=1, le=20)
+    # Freno de drawdown en vivo (0 = desactivado).
+    max_drawdown_pct: float = Field(default=0.0, ge=0, le=90)
+    drawdown_cooldown_hours: float = Field(default=48.0, gt=0, le=8760)
 
 
 class BotConfigOut(BotConfigIn):

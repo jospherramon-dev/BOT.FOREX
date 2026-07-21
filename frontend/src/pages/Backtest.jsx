@@ -105,6 +105,8 @@ function OptimizationPanel({ form, strategies }) {
         break_even_trigger_pips: +form.break_even_trigger_pips,
         trailing_stop_enabled: form.trailing_stop_enabled,
         trailing_stop_pips: +form.trailing_stop_pips,
+        max_drawdown_pct: +form.max_drawdown_pct,
+        drawdown_cooldown_bars: +form.drawdown_cooldown_bars,
         stop_loss_grid: parseList(grids.sl),
         take_profit_grid: parseList(grids.tp),
         break_even_grid: parseList(grids.be),
@@ -403,6 +405,8 @@ const DEFAULT_FORM = {
   break_even_trigger_pips: 20,
   trailing_stop_enabled: false,
   trailing_stop_pips: 15,
+  max_drawdown_pct: 0,
+  drawdown_cooldown_bars: 480,
 };
 
 export default function Backtest() {
@@ -464,6 +468,8 @@ export default function Backtest() {
         take_profit_pips: +form.take_profit_pips,
         break_even_trigger_pips: +form.break_even_trigger_pips,
         trailing_stop_pips: +form.trailing_stop_pips,
+        max_drawdown_pct: +form.max_drawdown_pct,
+        drawdown_cooldown_bars: +form.drawdown_cooldown_bars,
         date_from: form.date_from ? new Date(form.date_from).toISOString() : null,
         date_to: form.date_to ? new Date(form.date_to).toISOString() : null,
       };
@@ -596,6 +602,20 @@ export default function Backtest() {
             <div>
               <label className="label">Trailing (pips)</label>
               <input type="number" className="input" value={form.trailing_stop_pips} onChange={set('trailing_stop_pips')} />
+            </div>
+            <div>
+              <label className="label">Freno drawdown %</label>
+              <input type="number" className="input" placeholder="0 = off" value={form.max_drawdown_pct} onChange={set('max_drawdown_pct')} />
+              <p className="mt-1 text-[11px] text-term-muted">
+                Pausa las entradas si la cuenta cae este % desde su máximo (0 = desactivado).
+              </p>
+            </div>
+            <div>
+              <label className="label">Enfriamiento (velas)</label>
+              <input type="number" className="input" value={form.drawdown_cooldown_bars} onChange={set('drawdown_cooldown_bars')} />
+              <p className="mt-1 text-[11px] text-term-muted">
+                Velas en pausa tras activar el freno (M15: 480 ≈ 5 días).
+              </p>
             </div>
           </div>
 

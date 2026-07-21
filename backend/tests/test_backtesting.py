@@ -112,6 +112,19 @@ class BuyOnceStrategy(BaseStrategy):
 STRATEGY_REGISTRY[BuyOnceStrategy.name] = BuyOnceStrategy
 
 
+class AlwaysBuyBtStrategy(BaseStrategy):
+    """Compra en cada vela evaluada (para tests que necesitan muchos trades)."""
+
+    name = "test_always_buy"
+    min_bars = 5
+
+    def calculate_signal(self, df: pd.DataFrame, symbol: str) -> Signal:
+        return Signal(type=SignalType.BUY, symbol=symbol, reason="test")
+
+
+STRATEGY_REGISTRY[AlwaysBuyBtStrategy.name] = AlwaysBuyBtStrategy
+
+
 def _df_from_closes(closes: list[float]) -> pd.DataFrame:
     """Velas sintéticas con rango high/low de ±2 pips alrededor del cierre."""
     arr = np.asarray(closes)
@@ -183,6 +196,42 @@ def test_backtest_break_even_protege():
     assert trade.status == "CLOSED_SL"
     assert trade.exit_price == pytest.approx(1.1001)  # entrada + 1 pip
     assert trade.profit > 0  # protegido: cierra en positivo
+
+
+def test_freno_drawdown_reduce_perdida():
+    """
+    Con una estrategia que siempre compra en un mercado que cae sin parar,
+    el freno de drawdown debe cortar las entradas tras cruzar el umbral y
+    dejar una pérdida MENOR que sin freno.
+    """
+    # Mercado bajista pronunciado: cada BUY pierde rápido (≈3 pips/vela), así
+    # el drawdown se acumula pronto y el freno actúa a mitad del recorrido.
+    closes = [1.1000] * 6 + list(np.linspace(1.0990, 1.0000, 300))
+    df = _df_from_closes(closes)
+
+    sin_freno = Backtester(df, _base_params(strategy_name="test_always_buy")).run()
+    con_freno = Backtester(
+        df,
+        _base_params(
+            strategy_name="test_always_buy",
+            max_drawdown_pct=10,
+            drawdown_cooldown_bars=50,
+        ),
+    ).run()
+
+    # El freno deja una pérdida final menos negativa (protege capital).
+    assert con_freno.final_balance > sin_freno.final_balance
+    # Y abre menos operaciones (pausó durante el tramo malo).
+    assert len(con_freno.trades) < len(sin_freno.trades)
+
+
+def test_freno_drawdown_desactivado_por_defecto():
+    """Con max_drawdown_pct=0 el resultado es idéntico a no tener freno."""
+    closes = [1.1000] * 6 + list(np.linspace(1.1005, 1.1100, 30))
+    df = _df_from_closes(closes)
+    a = Backtester(df, _base_params()).run()
+    b = Backtester(df, _base_params(max_drawdown_pct=0)).run()
+    assert a.final_balance == b.final_balance
 
 
 def test_backtest_equity_curve_consistente():

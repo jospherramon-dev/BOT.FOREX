@@ -56,6 +56,14 @@ class BacktestParams:
     trailing_stop_enabled: bool = False
     trailing_stop_pips: float = 15.0
 
+    # Freno de drawdown (circuit breaker). 0 = desactivado. Si la equity cae
+    # este % desde su máximo, el bot deja de abrir operaciones nuevas durante
+    # `drawdown_cooldown_bars` velas — para no seguir sangrando en un régimen
+    # de mercado adverso. Tras el enfriamiento reanuda midiendo el drawdown
+    # desde el nuevo punto de partida.
+    max_drawdown_pct: float = 0.0
+    drawdown_cooldown_bars: int = 480  # M15: ≈5 días de mercado
+
     @property
     def pip_size(self) -> float:
         return 0.01 if "JPY" in self.symbol.upper() else 0.0001
@@ -124,6 +132,10 @@ class Backtester:
         trades: list[SimulatedTrade] = []
         equity_curve: list[dict] = []
 
+        # Estado del freno de drawdown.
+        peak_balance = balance
+        paused_until_bar = -1  # índice de vela hasta el que el freno pausa
+
         for i in range(self.strategy.min_bars, len(self.df)):
             candle = self.df.iloc[i]
             when = self.df.index[i].to_pydatetime()
@@ -138,8 +150,24 @@ class Backtester:
                 else:
                     self._apply_stop_management(open_trade, float(candle["close"]))
 
-            # 2) Buscar señal si no hay posición.
-            if open_trade is None:
+            # -- Freno de drawdown: ¿debe pausar la apertura de operaciones? --
+            trading_allowed = True
+            if p.max_drawdown_pct > 0:
+                peak_balance = max(peak_balance, balance)
+                drawdown = (
+                    (peak_balance - balance) / peak_balance if peak_balance > 0 else 0.0
+                )
+                if i < paused_until_bar:
+                    trading_allowed = False  # aún en enfriamiento
+                elif drawdown * 100 >= p.max_drawdown_pct:
+                    # Se cruzó el umbral: pausar y reiniciar la referencia de
+                    # pico desde aquí para medir el drawdown de nuevo al volver.
+                    paused_until_bar = i + p.drawdown_cooldown_bars
+                    peak_balance = balance
+                    trading_allowed = False
+
+            # 2) Buscar señal si no hay posición y el trading está permitido.
+            if open_trade is None and trading_allowed:
                 window = self.df.iloc[max(0, i - self._window): i + 1]
                 signal = self.strategy.calculate_signal(window, p.symbol)
                 if signal.type in (SignalType.BUY, SignalType.SELL):

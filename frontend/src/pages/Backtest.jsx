@@ -407,6 +407,7 @@ const DEFAULT_FORM = {
   trailing_stop_pips: 15,
   max_drawdown_pct: 0,
   drawdown_cooldown_bars: 480,
+  strategy_params: {},
 };
 
 export default function Backtest() {
@@ -425,13 +426,39 @@ export default function Backtest() {
   useEffect(() => {
     refreshDatasets();
     refreshRuns();
-    api.get('/bot/strategies').then(setStrategies).catch(() => {});
+    api.get('/bot/strategies').then((list) => {
+      setStrategies(list);
+      // Poblar los parámetros de la estrategia por defecto para que sus
+      // valores se envíen aunque el usuario no toque las casillas.
+      const active = list.find((s) => s.name === DEFAULT_FORM.strategy_name);
+      if (active) {
+        setForm((f) => ({
+          ...f,
+          strategy_params:
+            Object.keys(f.strategy_params ?? {}).length ? f.strategy_params : active.default_params,
+        }));
+      }
+    }).catch(() => {});
   }, []);
 
   const set = (field) => (e) => {
     const value = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
     setForm({ ...form, [field]: value });
   };
+
+  // Parámetros numéricos de la estrategia seleccionada (ej. EMA_TREND_PERIOD).
+  const selectedStrategy = strategies.find((s) => s.name === form.strategy_name);
+  const strategyNumericParams = Object.entries(selectedStrategy?.default_params ?? {})
+    .filter(([, v]) => typeof v === 'number');
+
+  const changeStrategy = (e) => {
+    // Al cambiar de estrategia, cargar sus parámetros por defecto.
+    const next = strategies.find((s) => s.name === e.target.value);
+    setForm({ ...form, strategy_name: e.target.value, strategy_params: next?.default_params ?? {} });
+  };
+
+  const setStrategyParam = (name) => (e) =>
+    setForm({ ...form, strategy_params: { ...form.strategy_params, [name]: e.target.value } });
 
   const upload = async (e) => {
     const file = e.target.files?.[0];
@@ -459,8 +486,14 @@ export default function Backtest() {
     setRunning(true);
     setResult(null);
     try {
+      // Convertir los parámetros de estrategia a número antes de enviarlos.
+      const strategy_params = {};
+      for (const [name, value] of Object.entries(form.strategy_params ?? {})) {
+        strategy_params[name] = typeof value === 'number' ? value : +value;
+      }
       const payload = {
         ...form,
+        strategy_params,
         initial_balance: +form.initial_balance,
         spread_pips: +form.spread_pips,
         risk_per_trade_pct: +form.risk_per_trade_pct,
@@ -569,12 +602,24 @@ export default function Backtest() {
             </div>
             <div className="col-span-2">
               <label className="label">Estrategia</label>
-              <select className="input" value={form.strategy_name} onChange={set('strategy_name')}>
+              <select className="input" value={form.strategy_name} onChange={changeStrategy}>
                 {strategies.map((s) => (
                   <option key={s.name} value={s.name}>{s.name}</option>
                 ))}
               </select>
             </div>
+            {/* Parámetros de la estrategia (ej. EMA_TREND_PERIOD para el filtro) */}
+            {strategyNumericParams.map(([name, def]) => (
+              <div key={name}>
+                <label className="label">{name}</label>
+                <input
+                  type="number"
+                  className="input"
+                  value={form.strategy_params?.[name] ?? def}
+                  onChange={setStrategyParam(name)}
+                />
+              </div>
+            ))}
             <div>
               <label className="label">Riesgo %</label>
               <input type="number" step="0.1" className="input" value={form.risk_per_trade_pct} onChange={set('risk_per_trade_pct')} />

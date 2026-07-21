@@ -140,24 +140,18 @@ class TradingEngine:
         """
         Freno de drawdown en vivo (mismo principio que en el backtest).
 
-        Sigue el pico de equity de la cuenta; si cae más de max_drawdown_pct
-        desde ese pico, pausa la apertura de operaciones nuevas durante
-        drawdown_cooldown_hours y reinicia la referencia al reanudar. Las
-        posiciones ya abiertas se siguen gestionando con normalidad (su
-        SL/TP las protege).
+        Sigue el PICO HISTÓRICO REAL de equity de la cuenta — nunca se
+        reinicia hacia abajo. Reiniciarlo tras cada pausa permitiría que
+        varias caídas sucesivas de "solo el X%" se encadenaran muy por
+        encima del X% configurado respecto al máximo real de la cuenta.
+        Si la equity cae ≥ max_drawdown_pct desde ese pico, pausa (o
+        extiende la pausa) la apertura de operaciones nuevas; no reanuda
+        hasta que el drawdown vuelva a estar por debajo del umbral Y haya
+        pasado el enfriamiento. Las posiciones ya abiertas se siguen
+        gestionando con normalidad (su SL/TP las protege).
         """
         if config.max_drawdown_pct <= 0:
             return True
-
-        now = datetime.now(timezone.utc)
-        if self._paused_until is not None:
-            if now < self._paused_until:
-                return False
-            # Fin del enfriamiento: reanuda midiendo desde el balance actual.
-            self._paused_until = None
-            self._peak_equity = None
-            await self._log("INFO", "Freno de drawdown: enfriamiento terminado, "
-                                    "reanudando la apertura de operaciones.")
 
         try:
             info = await asyncio.to_thread(self.connector.get_account_info)
@@ -170,15 +164,25 @@ class TradingEngine:
             (self._peak_equity - info.equity) / self._peak_equity
             if self._peak_equity > 0 else 0.0
         )
+        now = datetime.now(timezone.utc)
+
         if drawdown * 100 >= config.max_drawdown_pct:
+            if self._paused_until is None:
+                await self._log(
+                    "WARNING",
+                    f"FRENO DE DRAWDOWN activado: caída de {drawdown * 100:.1f}% "
+                    "desde el máximo histórico. Se pausan las entradas.",
+                )
             self._paused_until = now + timedelta(hours=config.drawdown_cooldown_hours)
-            await self._log(
-                "WARNING",
-                f"FRENO DE DRAWDOWN activado: caída de {drawdown * 100:.1f}% "
-                f"desde el máximo. Se pausan las entradas por "
-                f"{config.drawdown_cooldown_hours:.0f}h.",
-            )
             return False
+
+        if self._paused_until is not None:
+            if now < self._paused_until:
+                return False
+            self._paused_until = None
+            await self._log("INFO", "Freno de drawdown: enfriamiento terminado, "
+                                    "reanudando la apertura de operaciones.")
+
         return True
 
     # ------------------------------------------------------------------

@@ -57,10 +57,10 @@ class BacktestParams:
     trailing_stop_pips: float = 15.0
 
     # Freno de drawdown (circuit breaker). 0 = desactivado. Si la equity cae
-    # este % desde su máximo, el bot deja de abrir operaciones nuevas durante
-    # `drawdown_cooldown_bars` velas — para no seguir sangrando en un régimen
-    # de mercado adverso. Tras el enfriamiento reanuda midiendo el drawdown
-    # desde el nuevo punto de partida.
+    # este % desde su MÁXIMO HISTÓRICO REAL, el bot deja de abrir operaciones
+    # nuevas para no seguir sangrando en un régimen adverso, y no reanuda
+    # hasta recuperarse por debajo del umbral tras `drawdown_cooldown_bars`
+    # velas. El pico de referencia nunca se reinicia hacia abajo.
     max_drawdown_pct: float = 0.0
     drawdown_cooldown_bars: int = 480  # M15: ≈5 días de mercado
 
@@ -153,17 +153,20 @@ class Backtester:
             # -- Freno de drawdown: ¿debe pausar la apertura de operaciones? --
             trading_allowed = True
             if p.max_drawdown_pct > 0:
+                # El pico NUNCA baja: es el máximo histórico real de la
+                # cuenta. Reiniciarlo hacia abajo tras cada pausa permitiría
+                # que varias caídas sucesivas de "solo el X%" se encadenaran
+                # muy por encima del X% configurado respecto al máximo real
+                # — exactamente el fallo que este diseño evita.
                 peak_balance = max(peak_balance, balance)
                 drawdown = (
                     (peak_balance - balance) / peak_balance if peak_balance > 0 else 0.0
                 )
-                if i < paused_until_bar:
-                    trading_allowed = False  # aún en enfriamiento
-                elif drawdown * 100 >= p.max_drawdown_pct:
-                    # Se cruzó el umbral: pausar y reiniciar la referencia de
-                    # pico desde aquí para medir el drawdown de nuevo al volver.
+                if drawdown * 100 >= p.max_drawdown_pct:
+                    # Sigue (o vuelve a estar) en drawdown excesivo: pausar o
+                    # extender la pausa — no reanuda mientras no se recupere.
                     paused_until_bar = i + p.drawdown_cooldown_bars
-                    peak_balance = balance
+                if i < paused_until_bar:
                     trading_allowed = False
 
             # 2) Buscar señal si no hay posición y el trading está permitido.

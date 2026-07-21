@@ -101,6 +101,11 @@ function OptimizationPanel({ form, strategies }) {
         risk_per_trade_pct: +form.risk_per_trade_pct,
         stop_loss_pips: +form.stop_loss_pips,
         take_profit_pips: +form.take_profit_pips,
+        atr_sl_enabled: form.atr_sl_enabled,
+        atr_period: +form.atr_period,
+        atr_sl_multiplier: +form.atr_sl_multiplier,
+        atr_tp_ratio: +form.atr_tp_ratio,
+        atr_sl_min_pips: +form.atr_sl_min_pips,
         break_even_enabled: form.break_even_enabled,
         break_even_trigger_pips: +form.break_even_trigger_pips,
         trailing_stop_enabled: form.trailing_stop_enabled,
@@ -401,6 +406,11 @@ const DEFAULT_FORM = {
   risk_per_trade_pct: 1.0,
   stop_loss_pips: 30,
   take_profit_pips: 60,
+  atr_sl_enabled: false,
+  atr_period: 14,
+  atr_sl_multiplier: 1.5,
+  atr_tp_ratio: 2.0,
+  atr_sl_min_pips: 5,
   break_even_enabled: true,
   break_even_trigger_pips: 20,
   trailing_stop_enabled: false,
@@ -499,6 +509,10 @@ export default function Backtest() {
         risk_per_trade_pct: +form.risk_per_trade_pct,
         stop_loss_pips: +form.stop_loss_pips,
         take_profit_pips: +form.take_profit_pips,
+        atr_period: +form.atr_period,
+        atr_sl_multiplier: +form.atr_sl_multiplier,
+        atr_tp_ratio: +form.atr_tp_ratio,
+        atr_sl_min_pips: +form.atr_sl_min_pips,
         break_even_trigger_pips: +form.break_even_trigger_pips,
         trailing_stop_pips: +form.trailing_stop_pips,
         max_drawdown_pct: +form.max_drawdown_pct,
@@ -631,6 +645,26 @@ export default function Backtest() {
             <div>
               <label className="label">TP (pips)</label>
               <input type="number" className="input" value={form.take_profit_pips} onChange={set('take_profit_pips')} />
+            </div>
+            <label className="flex items-center gap-2 text-sm text-term-dim col-span-2">
+              <input type="checkbox" checked={form.atr_sl_enabled} onChange={set('atr_sl_enabled')} />
+              SL/TP por ATR (ignora SL/TP fijos de arriba)
+            </label>
+            <div>
+              <label className="label">ATR período</label>
+              <input type="number" className="input" value={form.atr_period} onChange={set('atr_period')} />
+            </div>
+            <div>
+              <label className="label">ATR × mult. (SL)</label>
+              <input type="number" step="0.1" className="input" value={form.atr_sl_multiplier} onChange={set('atr_sl_multiplier')} />
+            </div>
+            <div>
+              <label className="label">ATR ratio R:R (TP)</label>
+              <input type="number" step="0.1" className="input" value={form.atr_tp_ratio} onChange={set('atr_tp_ratio')} />
+            </div>
+            <div>
+              <label className="label">ATR SL mínimo (pips)</label>
+              <input type="number" className="input" value={form.atr_sl_min_pips} onChange={set('atr_sl_min_pips')} />
             </div>
             <div>
               <label className="label">BE trigger (pips)</label>

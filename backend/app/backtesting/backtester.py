@@ -51,6 +51,14 @@ class BacktestParams:
     risk_per_trade_pct: float = 1.0
     stop_loss_pips: float = 30.0
     take_profit_pips: float = 60.0
+    # SL/TP adaptativos por volatilidad (Método B del manual EMA+ADX). Si está
+    # activo, el SL = ATR(atr_period) × atr_sl_multiplier (nunca < atr_sl_min_pips)
+    # y el TP = SL × atr_tp_ratio, ignorando los pips fijos de arriba.
+    atr_sl_enabled: bool = False
+    atr_period: int = 14
+    atr_sl_multiplier: float = 1.5
+    atr_tp_ratio: float = 2.0
+    atr_sl_min_pips: float = 5.0
     break_even_enabled: bool = True
     break_even_trigger_pips: float = 20.0
     trailing_stop_enabled: bool = False
@@ -176,7 +184,7 @@ class Backtester:
                 signal = self.strategy.calculate_signal(window, p.symbol)
                 if signal.type in (SignalType.BUY, SignalType.SELL):
                     open_trade = self._open_trade(
-                        signal.type.value, float(candle["close"]), when, balance
+                        signal.type.value, float(candle["close"]), when, balance, i
                     )
 
             # 3) Registrar equity (balance + P/L flotante al cierre de vela).
@@ -211,23 +219,41 @@ class Backtester:
 
     # -- Apertura ----------------------------------------------------------
     def _open_trade(
-        self, direction: str, close_price: float, when: datetime, balance: float
+        self, direction: str, close_price: float, when: datetime,
+        balance: float, bar: int,
     ) -> SimulatedTrade:
         p = self.p
         spread = rm.pips_to_price_delta(p.spread_pips, p.pip_size)
         # BUY entra al ask (cierre + spread); SELL entra al bid (cierre).
         entry = close_price + spread if direction == "BUY" else close_price
 
+        # SL/TP: fijos o adaptativos por ATR (Método B). El ATR se calcula
+        # sobre las velas hasta la de señal (incluida), como en vivo.
+        sl_pips, tp_pips = self._effective_sl_tp_pips(bar)
+
         pip_value = rm.pip_value_per_lot(p.symbol, p.pip_size, entry)
-        lot = rm.calc_lot_size(
-            balance, p.risk_per_trade_pct, p.stop_loss_pips, pip_value
-        )
-        sl, tp = rm.calc_sl_tp(
-            direction, entry, p.stop_loss_pips, p.take_profit_pips, p.pip_size
-        )
+        lot = rm.calc_lot_size(balance, p.risk_per_trade_pct, sl_pips, pip_value)
+        sl, tp = rm.calc_sl_tp(direction, entry, sl_pips, tp_pips, p.pip_size)
         return SimulatedTrade(
             direction=direction, entry_time=when, entry_price=entry,
             lot_size=lot, stop_loss=sl, take_profit=tp,
+        )
+
+    def _effective_sl_tp_pips(self, bar: int) -> tuple[float, float]:
+        """Distancia de SL/TP en pips: fija o derivada del ATR en la señal."""
+        p = self.p
+        atr_value = 0.0
+        if p.atr_sl_enabled:
+            lookback = max(int(p.atr_period) * 3, int(p.atr_period) + 1)
+            start = max(0, bar - lookback)
+            window = self.df.iloc[start: bar + 1]
+            atr_value = rm.atr_pips(
+                window["high"].to_numpy(), window["low"].to_numpy(),
+                window["close"].to_numpy(), int(p.atr_period), p.pip_size,
+            )
+        return rm.resolve_sl_tp_pips(
+            p.stop_loss_pips, p.take_profit_pips, p.atr_sl_enabled,
+            atr_value, p.atr_sl_multiplier, p.atr_tp_ratio, p.atr_sl_min_pips,
         )
 
     # -- Salidas intra-vela --------------------------------------------------

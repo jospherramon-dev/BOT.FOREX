@@ -378,10 +378,10 @@ class TradingEngine:
         if already_open:
             return False
 
-        return await self._open_trade(db, config, asset, signal.type.value)
+        return await self._open_trade(db, config, asset, signal.type.value, df)
 
     async def _open_trade(
-        self, db, config: BotConfig, asset: Asset, direction: str
+        self, db, config: BotConfig, asset: Asset, direction: str, df=None
     ) -> bool:
         """Calcula lote/SL/TP, envía la orden y persiste la operación."""
         tick = await asyncio.to_thread(self.connector.get_price, asset.symbol)
@@ -398,14 +398,17 @@ class TradingEngine:
             asset.symbol, asset.pip_size, entry_ref, account.currency,
             contract_size=specs.contract_size,
         )
+        # SL/TP: fijos o adaptativos por ATR (Método B). El ATR se calcula
+        # sobre las mismas velas que evaluó la estrategia.
+        sl_pips, tp_pips = self._effective_sl_tp_pips(config, asset, df)
         lot = rm.calc_lot_size(
             account.balance, config.risk_per_trade_pct,
-            config.stop_loss_pips, pip_value,
+            sl_pips, pip_value,
             volume_min=specs.volume_min, volume_step=specs.volume_step,
         )
         # Aviso de transparencia: si el lote mínimo de la cuenta obliga a
         # arriesgar más de lo configurado, el usuario debe saberlo.
-        min_risk = specs.volume_min * config.stop_loss_pips * pip_value
+        min_risk = specs.volume_min * sl_pips * pip_value
         allowed_risk = account.balance * config.risk_per_trade_pct / 100.0
         if lot == specs.volume_min and min_risk > allowed_risk * 1.05:
             await self._log(
@@ -417,8 +420,7 @@ class TradingEngine:
                 f"cuenta Micro/Cent o un balance mayor.",
             )
         sl, tp = rm.calc_sl_tp(
-            direction, entry_ref,
-            config.stop_loss_pips, config.take_profit_pips, asset.pip_size,
+            direction, entry_ref, sl_pips, tp_pips, asset.pip_size,
         )
 
         result = await asyncio.to_thread(
@@ -464,6 +466,20 @@ class TradingEngine:
             },
         )
         return True
+
+    def _effective_sl_tp_pips(self, config: BotConfig, asset: Asset, df) -> tuple[float, float]:
+        """SL/TP en pips: fijos de la config o adaptativos por ATR (Método B)."""
+        atr_value = 0.0
+        if config.atr_sl_enabled and df is not None and len(df) >= 2:
+            atr_value = rm.atr_pips(
+                df["high"].to_numpy(), df["low"].to_numpy(),
+                df["close"].to_numpy(), int(config.atr_period), asset.pip_size,
+            )
+        return rm.resolve_sl_tp_pips(
+            config.stop_loss_pips, config.take_profit_pips, config.atr_sl_enabled,
+            atr_value, config.atr_sl_multiplier, config.atr_tp_ratio,
+            config.atr_sl_min_pips,
+        )
 
     # ------------------------------------------------------------------
     # Helpers

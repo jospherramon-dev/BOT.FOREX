@@ -334,8 +334,12 @@ function AssetsTab() {
 
 const RISK_FIELDS = [
   ['risk_per_trade_pct', 'Riesgo por trade (%)', 0.1],
-  ['stop_loss_pips', 'Stop Loss (pips)', 1],
-  ['take_profit_pips', 'Take Profit (pips)', 1],
+  ['stop_loss_pips', 'Stop Loss fijo (pips)', 1],
+  ['take_profit_pips', 'Take Profit fijo (pips)', 1],
+  ['atr_period', 'ATR período', 1],
+  ['atr_sl_multiplier', 'ATR × mult. (SL)', 0.1],
+  ['atr_tp_ratio', 'ATR ratio R:R (TP)', 0.1],
+  ['atr_sl_min_pips', 'ATR SL mínimo (pips)', 1],
   ['break_even_trigger_pips', 'Disparo break-even (pips)', 1],
   ['trailing_stop_pips', 'Trailing stop (pips)', 1],
   ['max_open_trades', 'Máx. operaciones abiertas', 1],
@@ -457,6 +461,10 @@ function RiskTab() {
           ))}
         </div>
         <div className="flex flex-wrap gap-6">
+          <label className="flex items-center gap-2 text-sm text-term-dim">
+            <input type="checkbox" checked={config.atr_sl_enabled} onChange={set('atr_sl_enabled')} />
+            SL/TP por ATR (ignora los pips fijos)
+          </label>
           <label className="flex items-center gap-2 text-sm text-term-dim">
             <input type="checkbox" checked={config.break_even_enabled} onChange={set('break_even_enabled')} />
             Break-even automático

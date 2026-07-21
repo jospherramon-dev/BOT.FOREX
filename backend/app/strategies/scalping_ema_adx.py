@@ -135,6 +135,7 @@ class ScalpingEmaAdxStrategy(BaseStrategy):
             "adx_threshold": 22.0,  # fuerza mínima para aceptar el cruce
             # --- Mejoras opcionales sobre el manual (0/False = como el PDF) ---
             "require_adx_rising": 0,  # 1 = exigir ADX subiendo respecto a la vela previa
+            "require_candle_confirm": 1,  # 1 = la vela de cruce debe CERRAR más allá de la EMA lenta
             "di_min_gap": 0.0,        # separación mínima +DI/-DI (manual sugiere >3)
             # --- Filtro de sesión (hora del BROKER; 0..24 = desactivado) ------
             "session_start_hour": 0,
@@ -181,6 +182,7 @@ class ScalpingEmaAdxStrategy(BaseStrategy):
         di_gap = abs(curr_pdi - curr_mdi)
         di_ok = di_gap >= float(p["di_min_gap"])
         in_session = self._within_session(df.index[-1])
+        confirm = bool(int(p["require_candle_confirm"]))
 
         metadata = {
             "close": round(curr_close, 5),
@@ -200,7 +202,7 @@ class ScalpingEmaAdxStrategy(BaseStrategy):
             and crossed_up
             and curr_close > curr_filter    # tendencia mayor alcista
             and curr_pdi > curr_mdi         # dirección alcista dominante
-            and curr_close > curr_slow      # confirmación de cuerpo de vela
+            and (not confirm or curr_close > curr_slow)  # confirmación de cuerpo
         ):
             return Signal(
                 type=SignalType.BUY,
@@ -219,7 +221,7 @@ class ScalpingEmaAdxStrategy(BaseStrategy):
             and crossed_down
             and curr_close < curr_filter    # tendencia mayor bajista
             and curr_mdi > curr_pdi         # dirección bajista dominante
-            and curr_close < curr_slow      # confirmación de cuerpo de vela
+            and (not confirm or curr_close < curr_slow)  # confirmación de cuerpo
         ):
             return Signal(
                 type=SignalType.SELL,

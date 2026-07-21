@@ -154,6 +154,15 @@ class BotConfig(Base):
     risk_per_trade_pct: Mapped[float] = mapped_column(Float, default=1.0)   # % de cuenta
     stop_loss_pips: Mapped[float] = mapped_column(Float, default=30.0)
     take_profit_pips: Mapped[float] = mapped_column(Float, default=60.0)
+    # SL/TP adaptativos por volatilidad (Método B del manual EMA+ADX). Con
+    # atr_sl_enabled=True el SL = ATR(atr_period) × atr_sl_multiplier (nunca
+    # por debajo de atr_sl_min_pips) y el TP = SL × atr_tp_ratio (R:R). Con
+    # False se usan los pips fijos de arriba. 0/False = comportamiento clásico.
+    atr_sl_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    atr_period: Mapped[int] = mapped_column(Integer, default=14)
+    atr_sl_multiplier: Mapped[float] = mapped_column(Float, default=1.5)
+    atr_tp_ratio: Mapped[float] = mapped_column(Float, default=2.0)
+    atr_sl_min_pips: Mapped[float] = mapped_column(Float, default=5.0)
     break_even_trigger_pips: Mapped[float] = mapped_column(Float, default=20.0)
     break_even_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     trailing_stop_enabled: Mapped[bool] = mapped_column(Boolean, default=False)

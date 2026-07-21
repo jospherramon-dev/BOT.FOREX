@@ -1,9 +1,53 @@
 """Tests del gestor de riesgo (Módulo B) — funciones puras."""
 
+import numpy as np
 import pytest
 
 from app.db.models import TradeStatus
 from app.engine import risk_manager as rm
+
+
+# ---------------------------------------------------------------------------
+# ATR y SL/TP adaptativos (Método B del manual EMA+ADX)
+# ---------------------------------------------------------------------------
+def test_atr_pips_rango_constante():
+    # Velas con rango real constante de 10 pips (high-low) y sin gaps:
+    # el ATR debe converger a ~10 pips.
+    n = 60
+    closes = np.full(n, 1.1000)
+    highs = closes + 0.0005   # +5 pips
+    lows = closes - 0.0005    # -5 pips  → rango 10 pips
+    atr = rm.atr_pips(highs, lows, closes, 14, 0.0001)
+    assert atr == pytest.approx(10.0, abs=0.5)
+
+
+def test_atr_pips_pocas_velas_devuelve_cero():
+    assert rm.atr_pips([1.1], [1.1], [1.1], 14, 0.0001) == 0.0
+
+
+def test_resolve_sl_tp_fijo_cuando_atr_desactivado():
+    sl, tp = rm.resolve_sl_tp_pips(30, 60, False, 8.0, 1.5, 2.0, 5.0)
+    assert (sl, tp) == (30, 60)
+
+
+def test_resolve_sl_tp_por_atr():
+    # ATR 8 pips × 1.5 = 12 pips de SL; TP = 12 × 2.0 = 24 pips (R:R 1:2).
+    sl, tp = rm.resolve_sl_tp_pips(30, 60, True, 8.0, 1.5, 2.0, 5.0)
+    assert sl == pytest.approx(12.0)
+    assert tp == pytest.approx(24.0)
+
+
+def test_resolve_sl_tp_respeta_minimo():
+    # ATR minúsculo (2 pips × 1.5 = 3) se eleva al mínimo de 5 pips.
+    sl, tp = rm.resolve_sl_tp_pips(30, 60, True, 2.0, 1.5, 2.0, 5.0)
+    assert sl == pytest.approx(5.0)
+    assert tp == pytest.approx(10.0)
+
+
+def test_resolve_sl_tp_cae_a_fijo_sin_atr():
+    # ATR no disponible (0): usa el SL/TP fijo para no abrir con SL absurdo.
+    sl, tp = rm.resolve_sl_tp_pips(30, 60, True, 0.0, 1.5, 2.0, 0.0)
+    assert (sl, tp) == (30, 60)
 
 
 # ---------------------------------------------------------------------------

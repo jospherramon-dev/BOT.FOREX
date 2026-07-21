@@ -256,6 +256,34 @@ def test_freno_drawdown_reanuda_tras_enfriamiento():
     )
 
 
+def test_sl_por_atr_dimensiona_el_stop():
+    """
+    Con SL por ATR activado, el stop de la operación debe reflejar
+    ATR × multiplicador, NO los pips fijos. Mercado que sube ~2 pips/vela
+    (rango 4 pips/vela) → ATR ≈ 4 pips → SL ≈ 4 × 1.5 = 6 pips.
+    """
+    closes = [1.1000] * 6 + list(np.linspace(1.10002, 1.10600, 300))
+    df = _df_from_closes(closes)
+    params = _base_params(
+        strategy_name="test_always_buy",
+        stop_loss_pips=30,          # fijo alto: se debe IGNORAR
+        take_profit_pips=60,
+        atr_sl_enabled=True,
+        atr_period=14,
+        atr_sl_multiplier=1.5,
+        atr_tp_ratio=2.0,
+        atr_sl_min_pips=1.0,        # bajo para no enmascarar el cálculo
+    )
+    result = Backtester(df, params).run()
+    assert result.trades, "Debe abrir al menos una operación"
+    t = result.trades[0]
+    sl_pips = abs(t.entry_price - t.stop_loss) / 0.0001
+    tp_pips = abs(t.take_profit - t.entry_price) / 0.0001
+    assert sl_pips < 30            # mucho menor que el SL fijo → viene del ATR
+    assert 3 < sl_pips < 12        # ~6 pips (ATR ~4 × 1.5)
+    assert tp_pips == pytest.approx(sl_pips * 2.0, rel=0.02)  # R:R 1:2
+
+
 def test_freno_drawdown_desactivado_por_defecto():
     """Con max_drawdown_pct=0 el resultado es idéntico a no tener freno."""
     closes = [1.1000] * 6 + list(np.linspace(1.1005, 1.1100, 30))

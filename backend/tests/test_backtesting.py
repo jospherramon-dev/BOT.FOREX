@@ -221,44 +221,38 @@ def test_freno_drawdown_reduce_perdida():
 
     # El freno deja una pérdida final menos negativa (protege capital).
     assert con_freno.final_balance > sin_freno.final_balance
-    # Y abre menos operaciones (pausó durante el tramo malo).
+    # Y abre menos operaciones (pausó durante los tramos malos).
     assert len(con_freno.trades) < len(sin_freno.trades)
 
 
-def test_freno_drawdown_no_se_acumula_mas_alla_del_limite():
+def test_freno_drawdown_reanuda_tras_enfriamiento():
     """
-    Regresión del bug real: el freno reiniciaba el pico hacia abajo tras
-    cada pausa, así que varias caídas sucesivas de "solo el X%" se
-    encadenaban muy por encima del X% configurado respecto al máximo
-    histórico real. Con varias olas de caída seguidas, el drawdown TOTAL
-    reportado (medido contra el pico verdadero) debe mantenerse acotado
-    cerca del límite, no acumularse sin control.
+    El freno NO debe bloquear el bot para siempre: tras el enfriamiento debe
+    reanudar. Con una caída seguida de una recuperación, el bot pausado debe
+    volver a operar en el tramo alcista (no quedarse plano hasta el final).
     """
-    from app.backtesting.metrics import max_drawdown_pct as compute_max_dd
-
-    # Varias olas de caída pronunciada separadas por tramos planos cortos
-    # (para que, si el bug reapareciera, el freno ya se hubiera "olvidado"
-    # del pico real antes de la siguiente ola).
-    wave_down = list(np.linspace(1.1000, 1.0500, 60))
-    flat = [1.0500] * 5
-    closes = [1.1000] * 6 + (wave_down + flat) * 4
-    df = _df_from_closes(closes)
-
-    params = _base_params(
-        strategy_name="test_always_buy",
-        max_drawdown_pct=20,
-        drawdown_cooldown_bars=40,
+    # Caída (activa el freno) → recuperación larga y sostenida.
+    closes = (
+        [1.1000] * 6
+        + list(np.linspace(1.0990, 1.0850, 60))   # baja: dispara el freno
+        + list(np.linspace(1.0851, 1.1400, 250))  # sube largo: debe reanudar
     )
-    result = Backtester(df, params).run()
-    equity = [p["equity"] for p in result.equity_curve]
+    df = _df_from_closes(closes)
+    result = Backtester(
+        df,
+        _base_params(
+            strategy_name="test_always_buy",
+            max_drawdown_pct=10,
+            drawdown_cooldown_bars=30,
+        ),
+    ).run()
 
-    observed_dd = compute_max_dd(equity)
-    # Con el freno funcionando de verdad, el drawdown total no debe
-    # dispararse muy por encima del límite configurado (se deja margen por
-    # el sobregiro inevitable de un solo trade antes de poder pausar).
-    assert observed_dd < 30.0, (
-        f"El drawdown ({observed_dd}%) se acumuló muy por encima del 20% "
-        "configurado — el freno no está anclado al pico histórico real."
+    # Debe haber operaciones con entrada DESPUÉS del tramo de recuperación
+    # inicial — prueba de que reanudó y no quedó bloqueado.
+    entry_times = [t.entry_time for t in result.trades]
+    resume_point = df.index[100].to_pydatetime()
+    assert any(t > resume_point for t in entry_times), (
+        "El freno bloqueó el bot permanentemente: no reanudó tras el enfriamiento"
     )
 
 

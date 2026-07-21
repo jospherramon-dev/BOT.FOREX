@@ -153,20 +153,21 @@ class Backtester:
             # -- Freno de drawdown: ¿debe pausar la apertura de operaciones? --
             trading_allowed = True
             if p.max_drawdown_pct > 0:
-                # El pico NUNCA baja: es el máximo histórico real de la
-                # cuenta. Reiniciarlo hacia abajo tras cada pausa permitiría
-                # que varias caídas sucesivas de "solo el X%" se encadenaran
-                # muy por encima del X% configurado respecto al máximo real
-                # — exactamente el fallo que este diseño evita.
+                # Al terminar un enfriamiento, se reinicia la referencia de
+                # pico al balance actual: así el bot puede REANUDAR y
+                # participar de una recuperación en vez de quedar bloqueado
+                # para siempre (un freno que mata el bot no sirve en vivo).
+                if 0 < paused_until_bar <= i:
+                    peak_balance = balance
+                    paused_until_bar = 0
                 peak_balance = max(peak_balance, balance)
                 drawdown = (
                     (peak_balance - balance) / peak_balance if peak_balance > 0 else 0.0
                 )
-                if drawdown * 100 >= p.max_drawdown_pct:
-                    # Sigue (o vuelve a estar) en drawdown excesivo: pausar o
-                    # extender la pausa — no reanuda mientras no se recupere.
-                    paused_until_bar = i + p.drawdown_cooldown_bars
                 if i < paused_until_bar:
+                    trading_allowed = False  # en enfriamiento
+                elif drawdown * 100 >= p.max_drawdown_pct:
+                    paused_until_bar = i + p.drawdown_cooldown_bars
                     trading_allowed = False
 
             # 2) Buscar señal si no hay posición y el trading está permitido.

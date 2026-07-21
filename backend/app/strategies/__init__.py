@@ -9,11 +9,13 @@ sumarla al registro.
 from app.strategies.base_strategy import BaseStrategy, Signal, SignalType
 from app.strategies.ma_rsi_crossover import MaRsiCrossoverStrategy
 from app.strategies.scalping_bb_rsi import ScalpingBbRsiStrategy
+from app.strategies.scalping_ema_adx import ScalpingEmaAdxStrategy
 from app.strategies.trend_ema_pullback import TrendEmaPullbackStrategy
 
 STRATEGY_REGISTRY: dict[str, type[BaseStrategy]] = {
     MaRsiCrossoverStrategy.name: MaRsiCrossoverStrategy,
     ScalpingBbRsiStrategy.name: ScalpingBbRsiStrategy,
+    ScalpingEmaAdxStrategy.name: ScalpingEmaAdxStrategy,
     TrendEmaPullbackStrategy.name: TrendEmaPullbackStrategy,
 }
 

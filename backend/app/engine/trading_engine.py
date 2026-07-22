@@ -428,10 +428,13 @@ class TradingEngine:
         if already_open:
             return False
 
-        return await self._open_trade(db, config, asset, signal.type.value, df)
+        return await self._open_trade(
+            db, config, asset, signal.type.value, df, signal
+        )
 
     async def _open_trade(
-        self, db, config: BotConfig, asset: Asset, direction: str, df=None
+        self, db, config: BotConfig, asset: Asset, direction: str,
+        df=None, signal=None,
     ) -> bool:
         """Calcula lote/SL/TP, envía la orden y persiste la operación."""
         tick = await asyncio.to_thread(self.connector.get_price, asset.symbol)
@@ -448,9 +451,17 @@ class TradingEngine:
             asset.symbol, asset.pip_size, entry_ref, account.currency,
             contract_size=specs.contract_size,
         )
-        # SL/TP: fijos o adaptativos por ATR (Método B). El ATR se calcula
-        # sobre las mismas velas que evaluó la estrategia.
-        sl_pips, tp_pips = self._effective_sl_tp_pips(config, asset, df)
+        # SL/TP ESTRUCTURAL: si la estrategia trae niveles absolutos en la
+        # señal (sl_price/tp_price, ej. SMC), se honran tal cual; si no,
+        # SL/TP fijos de la config o adaptativos por ATR (Método B).
+        structural = rm.structural_levels(
+            getattr(signal, "metadata", None), direction, entry_ref
+        )
+        if structural is not None:
+            sl_pips = abs(entry_ref - structural[0]) / asset.pip_size
+            tp_pips = abs(structural[1] - entry_ref) / asset.pip_size
+        else:
+            sl_pips, tp_pips = self._effective_sl_tp_pips(config, asset, df)
         lot = rm.calc_lot_size(
             account.balance, config.risk_per_trade_pct,
             sl_pips, pip_value,

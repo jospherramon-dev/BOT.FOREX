@@ -106,6 +106,32 @@ def atr_pips(highs, lows, closes, period: int, pip_size: float) -> float:
     return atr / pip_size
 
 
+def structural_levels(
+    metadata: dict | None, direction: str, entry_price: float
+) -> tuple[float, float] | None:
+    """
+    Extrae SL/TP ABSOLUTOS provistos por la estrategia (claves "sl_price" y
+    "tp_price" en la metadata de la señal — ej. SMC: SL tras el sweep, TP en
+    el pool de liquidez). Devuelve (sl, tp) solo si son coherentes con la
+    dirección y el precio de entrada; en cualquier otro caso None (el motor
+    cae a SL/TP por pips o ATR).
+    """
+    if not metadata:
+        return None
+    try:
+        sl = float(metadata.get("sl_price") or 0)
+        tp = float(metadata.get("tp_price") or 0)
+    except (TypeError, ValueError):
+        return None
+    if sl <= 0 or tp <= 0:
+        return None
+    if direction.upper() == "BUY" and sl < entry_price < tp:
+        return sl, tp
+    if direction.upper() == "SELL" and tp < entry_price < sl:
+        return sl, tp
+    return None
+
+
 def resolve_sl_tp_pips(
     fixed_sl_pips: float,
     fixed_tp_pips: float,

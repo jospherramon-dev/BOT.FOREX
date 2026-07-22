@@ -125,6 +125,29 @@ class AlwaysBuyBtStrategy(BaseStrategy):
 STRATEGY_REGISTRY[AlwaysBuyBtStrategy.name] = AlwaysBuyBtStrategy
 
 
+class StructuralBuyStrategy(BaseStrategy):
+    """Compra una vez con SL/TP ABSOLUTOS en la metadata (estilo SMC)."""
+
+    name = "test_structural_buy"
+    min_bars = 5
+
+    def __init__(self, params=None):
+        super().__init__(params)
+        self._fired = False
+
+    def calculate_signal(self, df: pd.DataFrame, symbol: str) -> Signal:
+        if not self._fired:
+            self._fired = True
+            return Signal(
+                type=SignalType.BUY, symbol=symbol, reason="test",
+                metadata={"sl_price": 1.0985, "tp_price": 1.1040},
+            )
+        return Signal(type=SignalType.HOLD, symbol=symbol)
+
+
+STRATEGY_REGISTRY[StructuralBuyStrategy.name] = StructuralBuyStrategy
+
+
 class BuyThenExitStrategy(BaseStrategy):
     """Compra una vez y, unas velas después, pide salir por check_exit."""
 
@@ -308,6 +331,27 @@ def test_sl_por_atr_dimensiona_el_stop():
     assert sl_pips < 30            # mucho menor que el SL fijo → viene del ATR
     assert 3 < sl_pips < 12        # ~6 pips (ATR ~4 × 1.5)
     assert tp_pips == pytest.approx(sl_pips * 2.0, rel=0.02)  # R:R 1:2
+
+
+def test_sl_tp_estructural_de_la_estrategia_se_honra():
+    """
+    Si la señal trae sl_price/tp_price absolutos (ej. SMC: SL tras el
+    sweep), el backtester debe usarlos TAL CUAL en vez de los pips fijos,
+    y dimensionar el lote con esa distancia real.
+    """
+    closes = [1.1000] * 6 + list(np.linspace(1.1005, 1.1055, 20))
+    df = _df_from_closes(closes)
+    result = Backtester(
+        df, _base_params(strategy_name="test_structural_buy",
+                         stop_loss_pips=30, take_profit_pips=60),
+    ).run()
+
+    assert len(result.trades) == 1
+    t = result.trades[0]
+    assert t.stop_loss == pytest.approx(1.0985)     # el de la estrategia
+    assert t.take_profit == pytest.approx(1.1040)   # no el fijo de 60 pips
+    assert t.status == "CLOSED_TP"
+    assert t.exit_price == pytest.approx(1.1040)
 
 
 def test_salida_tecnica_de_estrategia_cierra_posicion():

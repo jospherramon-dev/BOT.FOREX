@@ -197,7 +197,8 @@ class Backtester:
                 signal = self.strategy.calculate_signal(window, p.symbol)
                 if signal.type in (SignalType.BUY, SignalType.SELL):
                     open_trade = self._open_trade(
-                        signal.type.value, float(candle["close"]), when, balance, i
+                        signal.type.value, float(candle["close"]), when,
+                        balance, i, signal,
                     )
 
             # 3) Registrar equity (balance + P/L flotante al cierre de vela).
@@ -233,20 +234,28 @@ class Backtester:
     # -- Apertura ----------------------------------------------------------
     def _open_trade(
         self, direction: str, close_price: float, when: datetime,
-        balance: float, bar: int,
+        balance: float, bar: int, signal=None,
     ) -> SimulatedTrade:
         p = self.p
         spread = rm.pips_to_price_delta(p.spread_pips, p.pip_size)
         # BUY entra al ask (cierre + spread); SELL entra al bid (cierre).
         entry = close_price + spread if direction == "BUY" else close_price
 
-        # SL/TP: fijos o adaptativos por ATR (Método B). El ATR se calcula
-        # sobre las velas hasta la de señal (incluida), como en vivo.
-        sl_pips, tp_pips = self._effective_sl_tp_pips(bar)
+        # SL/TP ESTRUCTURAL: si la estrategia trae niveles absolutos en su
+        # metadata (sl_price/tp_price, ej. SMC: SL tras el sweep, TP en el
+        # pool de liquidez), se honran tal cual. Si no, SL/TP fijos o ATR.
+        structural = rm.structural_levels(
+            getattr(signal, "metadata", None), direction, entry
+        )
+        if structural is not None:
+            sl, tp = structural
+            sl_pips = abs(entry - sl) / p.pip_size
+        else:
+            sl_pips, tp_pips = self._effective_sl_tp_pips(bar)
+            sl, tp = rm.calc_sl_tp(direction, entry, sl_pips, tp_pips, p.pip_size)
 
         pip_value = rm.pip_value_per_lot(p.symbol, p.pip_size, entry)
         lot = rm.calc_lot_size(balance, p.risk_per_trade_pct, sl_pips, pip_value)
-        sl, tp = rm.calc_sl_tp(direction, entry, sl_pips, tp_pips, p.pip_size)
         return SimulatedTrade(
             direction=direction, entry_time=when, entry_price=entry,
             lot_size=lot, stop_loss=sl, take_profit=tp,

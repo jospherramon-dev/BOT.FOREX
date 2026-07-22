@@ -12,6 +12,53 @@
  */
 
 export const EMA_ADX_STRATEGY = 'scalping_ema_adx';
+export const SMC_STRATEGY = 'smc_liquidity_sweep';
+
+// Overrides recomendados de la estrategia SMC para XM EUR/USD M5. Los
+// defaults del backend ya están afinados para generar VARIAS ENTRADAS AL
+// DÍA (solo exigen sweep + bias); estos valores los hacen explícitos.
+// Perillas de frecuencia: min_score (bajar = más trades), require_* (subir
+// = menos), sweep_wick_body_ratio (bajar = más).
+export const SMC_STRATEGY_PARAMS = {
+  min_score: 8,
+  require_bias: 1,
+  require_pot: 0,
+  require_killzone: 0,
+  broker_et_offset: 7, // XM GMT+3 vs Nueva York (verano)
+  min_rr: 1.5,
+};
+
+// Riesgo para backtest SMC: el SL/TP lo trae la PROPIA señal (estructural,
+// tras el sweep / en el pool de liquidez), así que ATR va apagado y los
+// pips fijos son solo respaldo si una señal no trajera niveles.
+export const SMC_BACKTEST = {
+  timeframe: 'M5',
+  spread_pips: 1.9,
+  risk_per_trade_pct: 0.5,
+  atr_sl_enabled: false,
+  break_even_enabled: false,
+  trailing_stop_enabled: false,
+  max_drawdown_pct: 15,
+  drawdown_cooldown_bars: 576,
+};
+
+// Riesgo del BOT EN VIVO con SMC (enfriamiento del freno en horas).
+export const SMC_RISK_BOT = {
+  risk_per_trade_pct: 0.5,
+  atr_sl_enabled: false,
+  break_even_enabled: false,
+  trailing_stop_enabled: false,
+  max_open_trades: 1,
+  max_drawdown_pct: 15,
+  drawdown_cooldown_hours: 48,
+};
+
+// Overrides recomendados por estrategia (usados por el formulario de
+// backtest al cargar/cambiar de estrategia).
+export const RECOMMENDED_STRATEGY_PARAMS = {
+  [SMC_STRATEGY]: SMC_STRATEGY_PARAMS,
+  // EMA_ADX_STRATEGY_PARAMS se define más abajo; ver el registro al final.
+};
 
 // Overrides de los PARÁMETROS DE ESTRATEGIA. Los no listados quedan en su valor
 // por defecto (ema 9/21/50, adx_period 14, require_candle_confirm 1,
@@ -58,3 +105,6 @@ export const EMA_ADX_BACKTEST = {
   max_drawdown_pct: 15,
   drawdown_cooldown_bars: 576,
 };
+
+// Registro tardío (EMA_ADX_STRATEGY_PARAMS se declara arriba de este punto).
+RECOMMENDED_STRATEGY_PARAMS[EMA_ADX_STRATEGY] = EMA_ADX_STRATEGY_PARAMS;

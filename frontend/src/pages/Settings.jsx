@@ -22,6 +22,9 @@ import {
   EMA_ADX_RISK_BOT,
   EMA_ADX_STRATEGY,
   EMA_ADX_STRATEGY_PARAMS,
+  SMC_RISK_BOT,
+  SMC_STRATEGY,
+  SMC_STRATEGY_PARAMS,
 } from '../lib/presets';
 import Panel from '../components/Panel';
 
@@ -398,16 +401,16 @@ function RiskTab() {
     });
   };
 
-  const applyPreset = () => {
+  // Carga una configuración recomendada de un clic; el usuario solo pulsa
+  // "Guardar" para aplicarla al bot.
+  const applyPreset = (strategyName, riskPreset, paramOverrides) => () => {
     setSaved(false);
-    // Carga la configuración recomendada de EMA+ADX de un clic. Deja todo
-    // listo; el usuario solo pulsa "Guardar" para aplicarla al bot.
-    const emaAdx = strategies.find((s) => s.name === EMA_ADX_STRATEGY);
+    const strat = strategies.find((s) => s.name === strategyName);
     setConfig({
       ...config,
-      ...EMA_ADX_RISK_BOT,
-      strategy_name: EMA_ADX_STRATEGY,
-      strategy_params: { ...(emaAdx?.default_params ?? {}), ...EMA_ADX_STRATEGY_PARAMS },
+      ...riskPreset,
+      strategy_name: strategyName,
+      strategy_params: { ...(strat?.default_params ?? {}), ...paramOverrides },
     });
   };
 
@@ -439,11 +442,19 @@ function RiskTab() {
           </span>
           <button
             type="button"
-            onClick={applyPreset}
+            onClick={applyPreset(SMC_STRATEGY, SMC_RISK_BOT, SMC_STRATEGY_PARAMS)}
+            className="btn-ghost !py-1 !px-2 text-xs"
+            title="Carga la configuración recomendada de SMC. Luego pulsa Guardar."
+          >
+            Preset SMC
+          </button>
+          <button
+            type="button"
+            onClick={applyPreset(EMA_ADX_STRATEGY, EMA_ADX_RISK_BOT, EMA_ADX_STRATEGY_PARAMS)}
             className="btn-ghost !py-1 !px-2 text-xs"
             title="Carga la configuración recomendada de EMA+ADX. Luego pulsa Guardar."
           >
-            Cargar preset EMA+ADX
+            Preset EMA+ADX
           </button>
         </div>
       }

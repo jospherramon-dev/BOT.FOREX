@@ -19,7 +19,7 @@ import {
   YAxis,
 } from 'recharts';
 import { api } from '../api/client';
-import { EMA_ADX_BACKTEST, EMA_ADX_STRATEGY, EMA_ADX_STRATEGY_PARAMS } from '../lib/presets';
+import { RECOMMENDED_STRATEGY_PARAMS, SMC_BACKTEST, SMC_STRATEGY } from '../lib/presets';
 import ChartTooltip from '../components/ChartTooltip';
 import DirectionBadge from '../components/DirectionBadge';
 import Panel from '../components/Panel';
@@ -401,14 +401,19 @@ const DEFAULT_FORM = {
   date_from: '',
   date_to: '',
   initial_balance: 10000,
-  strategy_name: EMA_ADX_STRATEGY,
-  // SL/TP fijos: ignorados con el SL por ATR activo, pero visibles por si se
-  // desactiva. El resto de valores recomendados llegan por EMA_ADX_BACKTEST.
+  strategy_name: SMC_STRATEGY,
+  // SL/TP fijos y ATR: RESPALDO — la SMC trae SL/TP estructurales en cada
+  // señal. El resto de valores recomendados llegan por SMC_BACKTEST.
   stop_loss_pips: 30,
   take_profit_pips: 60,
+  break_even_trigger_pips: 20,
   trailing_stop_pips: 15,
-  ...EMA_ADX_BACKTEST,
-  // Se rellena con EMA_ADX_STRATEGY_PARAMS al cargar /strategies.
+  atr_period: 14,
+  atr_sl_multiplier: 1.5,
+  atr_tp_ratio: 2.0,
+  atr_sl_min_pips: 5,
+  ...SMC_BACKTEST,
+  // Se rellena con los recomendados de la estrategia al cargar /strategies.
   strategy_params: {},
 };
 
@@ -434,10 +439,9 @@ export default function Backtest() {
       // valores se envíen aunque el usuario no toque las casillas.
       const active = list.find((s) => s.name === DEFAULT_FORM.strategy_name);
       if (active) {
-        // Base = defaults de la estrategia; para EMA+ADX se aplican encima los
-        // valores recomendados (adx 24, sesión 15-19, salida por ADX, etc.).
-        const recommended =
-          active.name === EMA_ADX_STRATEGY ? EMA_ADX_STRATEGY_PARAMS : {};
+        // Base = defaults de la estrategia + overrides recomendados para
+        // los datos del usuario (XM EUR/USD), si los hay para esa estrategia.
+        const recommended = RECOMMENDED_STRATEGY_PARAMS[active.name] ?? {};
         setForm((f) => ({
           ...f,
           strategy_params: Object.keys(f.strategy_params ?? {}).length
@@ -459,9 +463,14 @@ export default function Backtest() {
     .filter(([, v]) => typeof v === 'number');
 
   const changeStrategy = (e) => {
-    // Al cambiar de estrategia, cargar sus parámetros por defecto.
+    // Al cambiar de estrategia, cargar sus defaults + recomendados.
     const next = strategies.find((s) => s.name === e.target.value);
-    setForm({ ...form, strategy_name: e.target.value, strategy_params: next?.default_params ?? {} });
+    const recommended = RECOMMENDED_STRATEGY_PARAMS[e.target.value] ?? {};
+    setForm({
+      ...form,
+      strategy_name: e.target.value,
+      strategy_params: { ...(next?.default_params ?? {}), ...recommended },
+    });
   };
 
   const setStrategyParam = (name) => (e) =>

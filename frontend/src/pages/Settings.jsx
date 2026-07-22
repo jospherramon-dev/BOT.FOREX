@@ -18,6 +18,11 @@ import {
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { api } from '../api/client';
+import {
+  EMA_ADX_RISK_BOT,
+  EMA_ADX_STRATEGY,
+  EMA_ADX_STRATEGY_PARAMS,
+} from '../lib/presets';
 import Panel from '../components/Panel';
 
 const TABS = [
@@ -393,6 +398,19 @@ function RiskTab() {
     });
   };
 
+  const applyPreset = () => {
+    setSaved(false);
+    // Carga la configuración recomendada de EMA+ADX de un clic. Deja todo
+    // listo; el usuario solo pulsa "Guardar" para aplicarla al bot.
+    const emaAdx = strategies.find((s) => s.name === EMA_ADX_STRATEGY);
+    setConfig({
+      ...config,
+      ...EMA_ADX_RISK_BOT,
+      strategy_name: EMA_ADX_STRATEGY,
+      strategy_params: { ...(emaAdx?.default_params ?? {}), ...EMA_ADX_STRATEGY_PARAMS },
+    });
+  };
+
   const save = async (e) => {
     e.preventDefault();
     setError('');
@@ -414,10 +432,20 @@ function RiskTab() {
     <Panel
       title="Gestión de riesgo del motor"
       actions={
-        <span className="text-xs text-term-dim">
-          Estrategia activa:{' '}
-          <span className="font-semibold text-term-accent">{config.strategy_name}</span>
-        </span>
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-term-dim">
+            Estrategia activa:{' '}
+            <span className="font-semibold text-term-accent">{config.strategy_name}</span>
+          </span>
+          <button
+            type="button"
+            onClick={applyPreset}
+            className="btn-ghost !py-1 !px-2 text-xs"
+            title="Carga la configuración recomendada de EMA+ADX. Luego pulsa Guardar."
+          >
+            Cargar preset EMA+ADX
+          </button>
+        </div>
       }
     >
       <form onSubmit={save} className="space-y-4 max-w-2xl">

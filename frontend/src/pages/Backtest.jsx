@@ -19,6 +19,7 @@ import {
   YAxis,
 } from 'recharts';
 import { api } from '../api/client';
+import { EMA_ADX_BACKTEST, EMA_ADX_STRATEGY, EMA_ADX_STRATEGY_PARAMS } from '../lib/presets';
 import ChartTooltip from '../components/ChartTooltip';
 import DirectionBadge from '../components/DirectionBadge';
 import Panel from '../components/Panel';
@@ -397,26 +398,17 @@ function OptimizationPanel({ form, strategies }) {
 const DEFAULT_FORM = {
   dataset: '',
   symbol: 'EURUSD',
-  timeframe: 'M15',
   date_from: '',
   date_to: '',
   initial_balance: 10000,
-  spread_pips: 1.0,
-  strategy_name: 'ma_rsi_crossover',
-  risk_per_trade_pct: 1.0,
+  strategy_name: EMA_ADX_STRATEGY,
+  // SL/TP fijos: ignorados con el SL por ATR activo, pero visibles por si se
+  // desactiva. El resto de valores recomendados llegan por EMA_ADX_BACKTEST.
   stop_loss_pips: 30,
   take_profit_pips: 60,
-  atr_sl_enabled: false,
-  atr_period: 14,
-  atr_sl_multiplier: 1.5,
-  atr_tp_ratio: 2.0,
-  atr_sl_min_pips: 5,
-  break_even_enabled: true,
-  break_even_trigger_pips: 20,
-  trailing_stop_enabled: false,
   trailing_stop_pips: 15,
-  max_drawdown_pct: 0,
-  drawdown_cooldown_bars: 480,
+  ...EMA_ADX_BACKTEST,
+  // Se rellena con EMA_ADX_STRATEGY_PARAMS al cargar /strategies.
   strategy_params: {},
 };
 
@@ -442,10 +434,15 @@ export default function Backtest() {
       // valores se envíen aunque el usuario no toque las casillas.
       const active = list.find((s) => s.name === DEFAULT_FORM.strategy_name);
       if (active) {
+        // Base = defaults de la estrategia; para EMA+ADX se aplican encima los
+        // valores recomendados (adx 24, sesión 15-19, salida por ADX, etc.).
+        const recommended =
+          active.name === EMA_ADX_STRATEGY ? EMA_ADX_STRATEGY_PARAMS : {};
         setForm((f) => ({
           ...f,
-          strategy_params:
-            Object.keys(f.strategy_params ?? {}).length ? f.strategy_params : active.default_params,
+          strategy_params: Object.keys(f.strategy_params ?? {}).length
+            ? f.strategy_params
+            : { ...active.default_params, ...recommended },
         }));
       }
     }).catch(() => {});

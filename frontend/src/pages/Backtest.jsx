@@ -19,7 +19,12 @@ import {
   YAxis,
 } from 'recharts';
 import { api } from '../api/client';
-import { RECOMMENDED_STRATEGY_PARAMS, SMC_BACKTEST, SMC_STRATEGY } from '../lib/presets';
+import {
+  ORB_BACKTEST,
+  ORB_STRATEGY,
+  RECOMMENDED_STRATEGY_PARAMS,
+  visibleStrategies,
+} from '../lib/presets';
 import ChartTooltip from '../components/ChartTooltip';
 import DirectionBadge from '../components/DirectionBadge';
 import Panel from '../components/Panel';
@@ -401,9 +406,9 @@ const DEFAULT_FORM = {
   date_from: '',
   date_to: '',
   initial_balance: 10000,
-  strategy_name: SMC_STRATEGY,
-  // SL/TP fijos y ATR: RESPALDO — la SMC trae SL/TP estructurales en cada
-  // señal. El resto de valores recomendados llegan por SMC_BACKTEST.
+  strategy_name: ORB_STRATEGY,
+  // SL/TP fijos y ATR: RESPALDO — la ORB trae SL/TP estructurales (por el
+  // tamaño del rango) en cada señal. El resto de valores llegan por ORB_BACKTEST.
   stop_loss_pips: 30,
   take_profit_pips: 60,
   break_even_trigger_pips: 20,
@@ -412,7 +417,7 @@ const DEFAULT_FORM = {
   atr_sl_multiplier: 1.5,
   atr_tp_ratio: 2.0,
   atr_sl_min_pips: 5,
-  ...SMC_BACKTEST,
+  ...ORB_BACKTEST,
   // Se rellena con los recomendados de la estrategia al cargar /strategies.
   strategy_params: {},
 };
@@ -623,7 +628,7 @@ export default function Backtest() {
             <div className="col-span-2">
               <label className="label">Estrategia</label>
               <select className="input" value={form.strategy_name} onChange={changeStrategy}>
-                {strategies.map((s) => (
+                {visibleStrategies(strategies, form.strategy_name).map((s) => (
                   <option key={s.name} value={s.name}>{s.name}</option>
                 ))}
               </select>

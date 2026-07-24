@@ -19,12 +19,10 @@ import {
 import { useEffect, useState } from 'react';
 import { api } from '../api/client';
 import {
-  EMA_ADX_RISK_BOT,
-  EMA_ADX_STRATEGY,
-  EMA_ADX_STRATEGY_PARAMS,
-  SMC_RISK_BOT,
-  SMC_STRATEGY,
-  SMC_STRATEGY_PARAMS,
+  ORB_RISK_BOT,
+  ORB_STRATEGY,
+  ORB_STRATEGY_PARAMS,
+  visibleStrategies,
 } from '../lib/presets';
 import Panel from '../components/Panel';
 
@@ -442,19 +440,11 @@ function RiskTab() {
           </span>
           <button
             type="button"
-            onClick={applyPreset(SMC_STRATEGY, SMC_RISK_BOT, SMC_STRATEGY_PARAMS)}
+            onClick={applyPreset(ORB_STRATEGY, ORB_RISK_BOT, ORB_STRATEGY_PARAMS)}
             className="btn-ghost !py-1 !px-2 text-xs"
-            title="Carga la configuración recomendada de SMC. Luego pulsa Guardar."
+            title="Carga la configuración recomendada de ORB (ruptura del rango de apertura). Luego pulsa Guardar."
           >
-            Preset SMC
-          </button>
-          <button
-            type="button"
-            onClick={applyPreset(EMA_ADX_STRATEGY, EMA_ADX_RISK_BOT, EMA_ADX_STRATEGY_PARAMS)}
-            className="btn-ghost !py-1 !px-2 text-xs"
-            title="Carga la configuración recomendada de EMA+ADX. Luego pulsa Guardar."
-          >
-            Preset EMA+ADX
+            Preset ORB
           </button>
         </div>
       }
@@ -463,7 +453,7 @@ function RiskTab() {
         <div>
           <label className="label">Estrategia</label>
           <select className="input" value={config.strategy_name} onChange={changeStrategy}>
-            {strategies.map((s) => (
+            {visibleStrategies(strategies, config.strategy_name).map((s) => (
               <option key={s.name} value={s.name}>{s.name}</option>
             ))}
           </select>

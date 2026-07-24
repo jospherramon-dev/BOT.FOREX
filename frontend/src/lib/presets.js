@@ -13,6 +13,24 @@
 
 export const EMA_ADX_STRATEGY = 'scalping_ema_adx';
 export const SMC_STRATEGY = 'smc_liquidity_sweep';
+export const ORB_STRATEGY = 'opening_range_breakout';
+
+// Estrategias que SIGUEN en el backend (para reproducir backtests viejos)
+// pero se OCULTAN del selector: barridas a fondo en 4 años de EUR/USD y sin
+// borde real. Reversible: quitar un nombre de aquí la vuelve a mostrar. La
+// estrategia actualmente seleccionada siempre se muestra, para no romper una
+// configuración guardada que todavía la use.
+export const HIDDEN_STRATEGIES = [
+  'scalping_bb_rsi',
+  'scalping_ema_adx',
+  'smc_liquidity_sweep',
+];
+
+/** Lista de estrategias sin las ocultas, conservando la seleccionada. */
+export const visibleStrategies = (list, currentName) =>
+  (list ?? []).filter(
+    (s) => !HIDDEN_STRATEGIES.includes(s.name) || s.name === currentName,
+  );
 
 // Overrides recomendados de la estrategia SMC para XM EUR/USD M5. Los
 // defaults del backend ya están afinados para generar VARIAS ENTRADAS AL
@@ -106,5 +124,42 @@ export const EMA_ADX_BACKTEST = {
   drawdown_cooldown_bars: 576,
 };
 
-// Registro tardío (EMA_ADX_STRATEGY_PARAMS se declara arriba de este punto).
+/* ───────────────────────── Ruptura del rango de apertura (ORB) ────────────
+ * Estrategia ESTADÍSTICA anclada a la apertura de sesión. Como la SMC, trae
+ * SL/TP ESTRUCTURAL en cada señal (por el tamaño del rango), así que el ATR
+ * va apagado y los pips fijos son solo respaldo. El horario está en HORA DEL
+ * BROKER: ~15:00 en un servidor GMT+3 (XM) cae sobre el solape Londres-NY.
+ */
+export const ORB_STRATEGY_PARAMS = {
+  session_hour: 15,       // solape Londres-NY en hora del servidor XM (GMT+3)
+  range_bars: 4,          // velas que forman el rango de apertura
+  entry_window_bars: 8,   // velas tras el rango en que puede dispararse
+  tp_rr: 1.5,             // R:R del objetivo
+};
+
+// Riesgo para BACKTEST ORB (enfriamiento en VELAS; en M15, 48 h ≈ 192 velas).
+export const ORB_BACKTEST = {
+  timeframe: 'M15',
+  spread_pips: 1.9,
+  risk_per_trade_pct: 0.5,
+  atr_sl_enabled: false,
+  break_even_enabled: false,
+  trailing_stop_enabled: false,
+  max_drawdown_pct: 15,
+  drawdown_cooldown_bars: 192,
+};
+
+// Riesgo del BOT EN VIVO con ORB (enfriamiento del freno en HORAS).
+export const ORB_RISK_BOT = {
+  risk_per_trade_pct: 0.5,
+  atr_sl_enabled: false,
+  break_even_enabled: false,
+  trailing_stop_enabled: false,
+  max_open_trades: 1,
+  max_drawdown_pct: 15,
+  drawdown_cooldown_hours: 48,
+};
+
+// Registro tardío (los *_PARAMS se declaran arriba de este punto).
 RECOMMENDED_STRATEGY_PARAMS[EMA_ADX_STRATEGY] = EMA_ADX_STRATEGY_PARAMS;
+RECOMMENDED_STRATEGY_PARAMS[ORB_STRATEGY] = ORB_STRATEGY_PARAMS;

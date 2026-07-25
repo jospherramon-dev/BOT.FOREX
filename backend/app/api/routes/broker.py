@@ -11,6 +11,7 @@ import logging
 
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from starlette.concurrency import run_in_threadpool
 
 from app.api.deps import CurrentUser, DBSession
@@ -48,7 +49,7 @@ def _get_owned_credential(
 )
 def save_credentials(
     payload: BrokerCredentialIn, db: DBSession, current_user: CurrentUser
-) -> BrokerCredential:
+) -> BrokerCredentialOut:
     """
     Guarda credenciales de broker. Los secretos se cifran con Fernet antes
     de persistirse; jamás se devuelven en ninguna respuesta.
@@ -84,13 +85,35 @@ def save_credentials(
         terminal_path=payload.terminal_path or None,
     )
     db.add(cred)
-    db.commit()
-    db.refresh(cred)
+    try:
+        # flush() manda el INSERT y asigna el id SIN cerrar la transacción.
+        # Con la fila aún viva se copian los campos de la respuesta: así el
+        # objeto devuelto no depende de releer la fila después del commit
+        # (tras el commit los atributos expiran y cualquier relectura fallida
+        # tumbaba un guardado que en realidad ya había funcionado).
+        db.flush()
+        salida = BrokerCredentialOut.model_validate(cred)
+        db.commit()
+    except SQLAlchemyError as exc:
+        # Causas típicas: base de datos bloqueada por otro proceso, archivo
+        # .db sin permisos de escritura, o un esquema viejo al que le falta
+        # una columna. Antes esto salía como un opaco "Internal Server Error";
+        # ahora se registra la traza y se devuelve la causa real.
+        db.rollback()
+        logger.exception("No se pudieron guardar las credenciales")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=(
+                "No se pudo guardar en la base de datos: "
+                f"{' '.join(str(exc).split())[:200]}"
+            ),
+        ) from exc
+
     logger.info(
         "Credencial %s guardada (id=%s) para usuario %s",
-        payload.broker_type.value, cred.id, current_user.username,
+        payload.broker_type.value, salida.id, current_user.username,
     )
-    return cred
+    return salida
 
 
 @router.get("/credentials", response_model=list[BrokerCredentialOut])

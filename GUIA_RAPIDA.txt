@@ -30,12 +30,27 @@ Navegador:  http://localhost:5173
 ------------------------------------------------------------
 2. QUE TODO ARRANQUE SOLO AL VOLVER LA LUZ (una sola vez)
 ------------------------------------------------------------
-Doble clic en:
-    Desktop\BOT.FOREX\scripts\instalar_autoarranque.bat
-Desde ese momento, cada vez que la PC encienda e inicie
-sesion en Windows, el bot completo arranca solo. Si el bot
-estaba activo antes del corte, se reanuda solo tambien.
-Para desactivarlo: quitar_autoarranque.bat
+Son 2 pasos, ambos de una sola vez:
+
+Paso A - que el bot arranque al iniciar sesion en Windows:
+    Doble clic en scripts\instalar_autoarranque.bat
+
+Paso B - que Windows inicie sesion solo (sin pedir un clic
+en la pantalla de bloqueo):
+    Clic DERECHO en scripts\activar_autologin.bat ->
+    "Ejecutar como administrador". Escriba su nombre de
+    usuario de Windows cuando lo pida (ej. User).
+    (Este paso es imprescindible: sin el, Windows se queda
+    en la pantalla de bloqueo esperando un clic y el bot
+    nunca llega a arrancar solo).
+
+Con los 2 pasos hechos: corte de luz -> vuelve la luz -> la
+PC enciende -> Windows entra directo al escritorio -> el bot
+arranca solo. Cero clics, cero comandos.
+
+Para deshacer el Paso B: clic derecho -> Ejecutar como
+administrador sobre desactivar_autologin.bat
+Para deshacer el Paso A: quitar_autoarranque.bat
 
 Consejos para cortes de luz:
 - Configure el terminal MT5 para NO pedir contrasena al abrir

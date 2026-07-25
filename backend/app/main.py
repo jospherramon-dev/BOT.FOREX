@@ -10,8 +10,9 @@ Swagger UI: http://localhost:8000/docs
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.api.routes import assets, auth, backtest, bot, broker, telegram, ws
 from app.core.config import settings
@@ -61,6 +62,29 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """
+    Convierte cualquier error no controlado en una respuesta que DICE la causa.
+
+    Antes, un fallo inesperado (por ejemplo la base de datos bloqueada o con
+    un esquema viejo) llegaba al dashboard como un escueto "Internal Server
+    Error": imposible saber qué pasó sin abrir la consola del backend. Ahora
+    la traza completa se escribe en el log Y el mensaje devuelto incluye el
+    tipo de error y su descripción, que es lo que el usuario ve en pantalla.
+
+    Es una app local de un solo usuario, así que mostrar el detalle ayuda a
+    diagnosticar sin exponer nada a terceros. Aun así el texto se recorta,
+    para no volcar sentencias SQL enormes en la interfaz.
+    """
+    logger.exception("Error no controlado en %s %s", request.method, request.url.path)
+    detalle = " ".join(str(exc).split())[:300] or exc.__class__.__name__
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"{exc.__class__.__name__}: {detalle}"},
+    )
+
 
 # --- Rutas del Módulo A ------------------------------------------------
 app.include_router(auth.router, prefix=settings.API_V1_PREFIX)

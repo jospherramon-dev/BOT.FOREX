@@ -86,6 +86,14 @@ def _apply_micro_migrations() -> None:
 
     statements = [
         "ALTER TABLE bot_configs ADD COLUMN strategy_params_json TEXT DEFAULT '{}'",
+        "ALTER TABLE broker_credentials ADD COLUMN terminal_path VARCHAR(500)",
+        "ALTER TABLE bot_configs ADD COLUMN max_drawdown_pct FLOAT DEFAULT 0.0",
+        "ALTER TABLE bot_configs ADD COLUMN drawdown_cooldown_hours FLOAT DEFAULT 48.0",
+        "ALTER TABLE bot_configs ADD COLUMN atr_sl_enabled BOOLEAN DEFAULT 0",
+        "ALTER TABLE bot_configs ADD COLUMN atr_period INTEGER DEFAULT 14",
+        "ALTER TABLE bot_configs ADD COLUMN atr_sl_multiplier FLOAT DEFAULT 1.5",
+        "ALTER TABLE bot_configs ADD COLUMN atr_tp_ratio FLOAT DEFAULT 2.0",
+        "ALTER TABLE bot_configs ADD COLUMN atr_sl_min_pips FLOAT DEFAULT 5.0",
     ]
     with engine.connect() as conn:
         for stmt in statements:

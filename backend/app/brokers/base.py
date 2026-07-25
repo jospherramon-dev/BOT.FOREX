@@ -98,6 +98,11 @@ class BrokerConnector(ABC):
     """Contrato que todo conector de broker debe cumplir."""
 
     name: str = "abstract"
+    #: Detalle del último fallo de connect() (código/mensaje real del
+    #: broker). Los conectores lo rellenan; por defecto vacío. Permite que
+    #: el botón "Probar Conexión" muestre la causa exacta en vez de un
+    #: mensaje genérico.
+    last_error: str = ""
 
     # --- Ciclo de vida --------------------------------------------------
     @abstractmethod

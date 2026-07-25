@@ -51,10 +51,26 @@ class BacktestParams:
     risk_per_trade_pct: float = 1.0
     stop_loss_pips: float = 30.0
     take_profit_pips: float = 60.0
+    # SL/TP adaptativos por volatilidad (Método B del manual EMA+ADX). Si está
+    # activo, el SL = ATR(atr_period) × atr_sl_multiplier (nunca < atr_sl_min_pips)
+    # y el TP = SL × atr_tp_ratio, ignorando los pips fijos de arriba.
+    atr_sl_enabled: bool = False
+    atr_period: int = 14
+    atr_sl_multiplier: float = 1.5
+    atr_tp_ratio: float = 2.0
+    atr_sl_min_pips: float = 5.0
     break_even_enabled: bool = True
     break_even_trigger_pips: float = 20.0
     trailing_stop_enabled: bool = False
     trailing_stop_pips: float = 15.0
+
+    # Freno de drawdown (circuit breaker). 0 = desactivado. Si la equity cae
+    # este % desde su MÁXIMO HISTÓRICO REAL, el bot deja de abrir operaciones
+    # nuevas para no seguir sangrando en un régimen adverso, y no reanuda
+    # hasta recuperarse por debajo del umbral tras `drawdown_cooldown_bars`
+    # velas. El pico de referencia nunca se reinicia hacia abajo.
+    max_drawdown_pct: float = 0.0
+    drawdown_cooldown_bars: int = 480  # M15: ≈5 días de mercado
 
     @property
     def pip_size(self) -> float:
@@ -124,6 +140,10 @@ class Backtester:
         trades: list[SimulatedTrade] = []
         equity_curve: list[dict] = []
 
+        # Estado del freno de drawdown.
+        peak_balance = balance
+        paused_until_bar = -1  # índice de vela hasta el que el freno pausa
+
         for i in range(self.strategy.min_bars, len(self.df)):
             candle = self.df.iloc[i]
             when = self.df.index[i].to_pydatetime()
@@ -138,13 +158,47 @@ class Backtester:
                 else:
                     self._apply_stop_management(open_trade, float(candle["close"]))
 
-            # 2) Buscar señal si no hay posición.
-            if open_trade is None:
+            # 1b) Salida técnica de la estrategia (reglas 5.3/5.4): si sobrevivió
+            # a SL/TP pero la estrategia pide cerrar, se cierra al precio de cierre.
+            if open_trade is not None:
+                exit_win = self.df.iloc[max(0, i - self._window): i + 1]
+                if self.strategy.check_exit(exit_win, p.symbol, open_trade.direction):
+                    self._close_trade(
+                        open_trade, float(candle["close"]), when,
+                        TradeStatus.CLOSED_MANUAL.value,
+                    )
+                    balance += open_trade.profit
+                    trades.append(open_trade)
+                    open_trade = None
+
+            # -- Freno de drawdown: ¿debe pausar la apertura de operaciones? --
+            trading_allowed = True
+            if p.max_drawdown_pct > 0:
+                # Al terminar un enfriamiento, se reinicia la referencia de
+                # pico al balance actual: así el bot puede REANUDAR y
+                # participar de una recuperación en vez de quedar bloqueado
+                # para siempre (un freno que mata el bot no sirve en vivo).
+                if 0 < paused_until_bar <= i:
+                    peak_balance = balance
+                    paused_until_bar = 0
+                peak_balance = max(peak_balance, balance)
+                drawdown = (
+                    (peak_balance - balance) / peak_balance if peak_balance > 0 else 0.0
+                )
+                if i < paused_until_bar:
+                    trading_allowed = False  # en enfriamiento
+                elif drawdown * 100 >= p.max_drawdown_pct:
+                    paused_until_bar = i + p.drawdown_cooldown_bars
+                    trading_allowed = False
+
+            # 2) Buscar señal si no hay posición y el trading está permitido.
+            if open_trade is None and trading_allowed:
                 window = self.df.iloc[max(0, i - self._window): i + 1]
                 signal = self.strategy.calculate_signal(window, p.symbol)
                 if signal.type in (SignalType.BUY, SignalType.SELL):
                     open_trade = self._open_trade(
-                        signal.type.value, float(candle["close"]), when, balance
+                        signal.type.value, float(candle["close"]), when,
+                        balance, i, signal,
                     )
 
             # 3) Registrar equity (balance + P/L flotante al cierre de vela).
@@ -179,23 +233,49 @@ class Backtester:
 
     # -- Apertura ----------------------------------------------------------
     def _open_trade(
-        self, direction: str, close_price: float, when: datetime, balance: float
+        self, direction: str, close_price: float, when: datetime,
+        balance: float, bar: int, signal=None,
     ) -> SimulatedTrade:
         p = self.p
         spread = rm.pips_to_price_delta(p.spread_pips, p.pip_size)
         # BUY entra al ask (cierre + spread); SELL entra al bid (cierre).
         entry = close_price + spread if direction == "BUY" else close_price
 
+        # SL/TP ESTRUCTURAL: si la estrategia trae niveles absolutos en su
+        # metadata (sl_price/tp_price, ej. SMC: SL tras el sweep, TP en el
+        # pool de liquidez), se honran tal cual. Si no, SL/TP fijos o ATR.
+        structural = rm.structural_levels(
+            getattr(signal, "metadata", None), direction, entry
+        )
+        if structural is not None:
+            sl, tp = structural
+            sl_pips = abs(entry - sl) / p.pip_size
+        else:
+            sl_pips, tp_pips = self._effective_sl_tp_pips(bar)
+            sl, tp = rm.calc_sl_tp(direction, entry, sl_pips, tp_pips, p.pip_size)
+
         pip_value = rm.pip_value_per_lot(p.symbol, p.pip_size, entry)
-        lot = rm.calc_lot_size(
-            balance, p.risk_per_trade_pct, p.stop_loss_pips, pip_value
-        )
-        sl, tp = rm.calc_sl_tp(
-            direction, entry, p.stop_loss_pips, p.take_profit_pips, p.pip_size
-        )
+        lot = rm.calc_lot_size(balance, p.risk_per_trade_pct, sl_pips, pip_value)
         return SimulatedTrade(
             direction=direction, entry_time=when, entry_price=entry,
             lot_size=lot, stop_loss=sl, take_profit=tp,
+        )
+
+    def _effective_sl_tp_pips(self, bar: int) -> tuple[float, float]:
+        """Distancia de SL/TP en pips: fija o derivada del ATR en la señal."""
+        p = self.p
+        atr_value = 0.0
+        if p.atr_sl_enabled:
+            lookback = max(int(p.atr_period) * 3, int(p.atr_period) + 1)
+            start = max(0, bar - lookback)
+            window = self.df.iloc[start: bar + 1]
+            atr_value = rm.atr_pips(
+                window["high"].to_numpy(), window["low"].to_numpy(),
+                window["close"].to_numpy(), int(p.atr_period), p.pip_size,
+            )
+        return rm.resolve_sl_tp_pips(
+            p.stop_loss_pips, p.take_profit_pips, p.atr_sl_enabled,
+            atr_value, p.atr_sl_multiplier, p.atr_tp_ratio, p.atr_sl_min_pips,
         )
 
     # -- Salidas intra-vela --------------------------------------------------

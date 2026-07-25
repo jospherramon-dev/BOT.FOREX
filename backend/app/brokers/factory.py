@@ -32,6 +32,7 @@ def create_connector(credential: BrokerCredential) -> BrokerConnector:
             login=int(decrypt_secret(credential.encrypted_login)),
             password=decrypt_secret(credential.encrypted_password),
             server=credential.server,
+            terminal_path=credential.terminal_path,
         )
 
     if credential.broker_type == BrokerType.OANDA:

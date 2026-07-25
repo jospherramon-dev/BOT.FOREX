@@ -106,6 +106,9 @@ class BrokerCredential(Base):
     encrypted_api_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     server: Mapped[str | None] = mapped_column(String(120), nullable=True)
     account_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    # MT5: ruta al terminal.exe de este broker (opcional). Necesaria si hay
+    # varios terminales MT5 instalados en la PC (uno por broker).
+    terminal_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     is_demo: Mapped[bool] = mapped_column(Boolean, default=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -151,11 +154,25 @@ class BotConfig(Base):
     risk_per_trade_pct: Mapped[float] = mapped_column(Float, default=1.0)   # % de cuenta
     stop_loss_pips: Mapped[float] = mapped_column(Float, default=30.0)
     take_profit_pips: Mapped[float] = mapped_column(Float, default=60.0)
+    # SL/TP adaptativos por volatilidad (Método B del manual EMA+ADX). Con
+    # atr_sl_enabled=True el SL = ATR(atr_period) × atr_sl_multiplier (nunca
+    # por debajo de atr_sl_min_pips) y el TP = SL × atr_tp_ratio (R:R). Con
+    # False se usan los pips fijos de arriba. 0/False = comportamiento clásico.
+    atr_sl_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    atr_period: Mapped[int] = mapped_column(Integer, default=14)
+    atr_sl_multiplier: Mapped[float] = mapped_column(Float, default=1.5)
+    atr_tp_ratio: Mapped[float] = mapped_column(Float, default=2.0)
+    atr_sl_min_pips: Mapped[float] = mapped_column(Float, default=5.0)
     break_even_trigger_pips: Mapped[float] = mapped_column(Float, default=20.0)
     break_even_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     trailing_stop_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     trailing_stop_pips: Mapped[float] = mapped_column(Float, default=15.0)
     max_open_trades: Mapped[int] = mapped_column(Integer, default=3)
+    # Freno de drawdown en vivo: si la equity cae este % desde su máximo, el
+    # motor deja de abrir operaciones nuevas durante drawdown_cooldown_hours.
+    # 0 = desactivado.
+    max_drawdown_pct: Mapped[float] = mapped_column(Float, default=0.0)
+    drawdown_cooldown_hours: Mapped[float] = mapped_column(Float, default=48.0)
     bot_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
 
     # Notificaciones Telegram (Módulo D) — token cifrado con Fernet.

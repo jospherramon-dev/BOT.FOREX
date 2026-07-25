@@ -76,6 +76,93 @@ def calc_sl_tp(
 
 
 # ---------------------------------------------------------------------------
+# ATR (volatilidad) y SL/TP adaptativos
+# ---------------------------------------------------------------------------
+def atr_pips(highs, lows, closes, period: int, pip_size: float) -> float:
+    """
+    ATR de Wilder sobre las velas dadas, devuelto EN PIPS.
+
+    Acepta secuencias posicionales (listas o `numpy.ndarray`; NO Series con
+    índice temporal — pásalas con `.to_numpy()`). Semilla = media simple de
+    los primeros `period` True Range; después, suavizado de Wilder. Devuelve
+    0.0 si no hay velas suficientes (el llamador cae al SL fijo).
+    """
+    n = len(closes)
+    if n < 2 or pip_size <= 0:
+        return 0.0
+    period = max(1, int(period))
+
+    trs: list[float] = []
+    for i in range(1, n):
+        h, low, prev_close = float(highs[i]), float(lows[i]), float(closes[i - 1])
+        trs.append(max(h - low, abs(h - prev_close), abs(low - prev_close)))
+
+    if len(trs) <= period:
+        atr = sum(trs) / len(trs)
+    else:
+        atr = sum(trs[:period]) / period
+        for tr in trs[period:]:
+            atr = (atr * (period - 1) + tr) / period
+    return atr / pip_size
+
+
+def structural_levels(
+    metadata: dict | None, direction: str, entry_price: float
+) -> tuple[float, float] | None:
+    """
+    Extrae SL/TP ABSOLUTOS provistos por la estrategia (claves "sl_price" y
+    "tp_price" en la metadata de la señal — ej. SMC: SL tras el sweep, TP en
+    el pool de liquidez). Devuelve (sl, tp) solo si son coherentes con la
+    dirección y el precio de entrada; en cualquier otro caso None (el motor
+    cae a SL/TP por pips o ATR).
+    """
+    if not metadata:
+        return None
+    try:
+        sl = float(metadata.get("sl_price") or 0)
+        tp = float(metadata.get("tp_price") or 0)
+    except (TypeError, ValueError):
+        return None
+    if sl <= 0 or tp <= 0:
+        return None
+    if direction.upper() == "BUY" and sl < entry_price < tp:
+        return sl, tp
+    if direction.upper() == "SELL" and tp < entry_price < sl:
+        return sl, tp
+    return None
+
+
+def resolve_sl_tp_pips(
+    fixed_sl_pips: float,
+    fixed_tp_pips: float,
+    atr_enabled: bool,
+    atr_value_pips: float,
+    atr_multiplier: float,
+    tp_ratio: float,
+    atr_min_pips: float = 0.0,
+) -> tuple[float, float]:
+    """
+    Decide la distancia de SL y TP en pips para una entrada.
+
+    - Con `atr_enabled=False`: usa los pips FIJOS configurados (comportamiento
+      clásico; Método C del manual).
+    - Con `atr_enabled=True` (Método B del manual): SL = ATR × multiplicador,
+      acotado por debajo a `atr_min_pips` (el manual: "nunca < 5 pips en M5"),
+      y TP = SL × ratio R:R. Si el ATR aún no está disponible (0), cae al SL
+      fijo para no abrir con un SL absurdo.
+    """
+    if not atr_enabled:
+        return fixed_sl_pips, fixed_tp_pips
+
+    sl = atr_value_pips * atr_multiplier
+    if atr_min_pips > 0:
+        sl = max(sl, atr_min_pips)
+    if sl <= 0:
+        return fixed_sl_pips, fixed_tp_pips  # ATR no disponible: SL fijo
+    return sl, sl * tp_ratio
+
+
+# ---------------------------------------------------------------------------
 # Tamaño de lote dinámico
 # ---------------------------------------------------------------------------
 def pip_value_per_lot(symbol: str, pip_size: float, price: float,

@@ -112,6 +112,68 @@ class BuyOnceStrategy(BaseStrategy):
 STRATEGY_REGISTRY[BuyOnceStrategy.name] = BuyOnceStrategy
 
 
+class AlwaysBuyBtStrategy(BaseStrategy):
+    """Compra en cada vela evaluada (para tests que necesitan muchos trades)."""
+
+    name = "test_always_buy"
+    min_bars = 5
+
+    def calculate_signal(self, df: pd.DataFrame, symbol: str) -> Signal:
+        return Signal(type=SignalType.BUY, symbol=symbol, reason="test")
+
+
+STRATEGY_REGISTRY[AlwaysBuyBtStrategy.name] = AlwaysBuyBtStrategy
+
+
+class StructuralBuyStrategy(BaseStrategy):
+    """Compra una vez con SL/TP ABSOLUTOS en la metadata (estilo SMC)."""
+
+    name = "test_structural_buy"
+    min_bars = 5
+
+    def __init__(self, params=None):
+        super().__init__(params)
+        self._fired = False
+
+    def calculate_signal(self, df: pd.DataFrame, symbol: str) -> Signal:
+        if not self._fired:
+            self._fired = True
+            return Signal(
+                type=SignalType.BUY, symbol=symbol, reason="test",
+                metadata={"sl_price": 1.0985, "tp_price": 1.1040},
+            )
+        return Signal(type=SignalType.HOLD, symbol=symbol)
+
+
+STRATEGY_REGISTRY[StructuralBuyStrategy.name] = StructuralBuyStrategy
+
+
+class BuyThenExitStrategy(BaseStrategy):
+    """Compra una vez y, unas velas después, pide salir por check_exit."""
+
+    name = "test_buy_then_exit"
+    min_bars = 5
+
+    def __init__(self, params=None):
+        super().__init__(params)
+        self._fired = False
+        self._bars_open = 0
+
+    def calculate_signal(self, df: pd.DataFrame, symbol: str) -> Signal:
+        if not self._fired:
+            self._fired = True
+            return Signal(type=SignalType.BUY, symbol=symbol, reason="test")
+        return Signal(type=SignalType.HOLD, symbol=symbol)
+
+    def check_exit(self, df: pd.DataFrame, symbol: str, direction: str) -> bool:
+        # Cierra a la tercera vela evaluada tras abrir.
+        self._bars_open += 1
+        return self._bars_open >= 3
+
+
+STRATEGY_REGISTRY[BuyThenExitStrategy.name] = BuyThenExitStrategy
+
+
 def _df_from_closes(closes: list[float]) -> pd.DataFrame:
     """Velas sintéticas con rango high/low de ±2 pips alrededor del cierre."""
     arr = np.asarray(closes)
@@ -183,6 +245,143 @@ def test_backtest_break_even_protege():
     assert trade.status == "CLOSED_SL"
     assert trade.exit_price == pytest.approx(1.1001)  # entrada + 1 pip
     assert trade.profit > 0  # protegido: cierra en positivo
+
+
+def test_freno_drawdown_reduce_perdida():
+    """
+    Con una estrategia que siempre compra en un mercado que cae sin parar,
+    el freno de drawdown debe cortar las entradas tras cruzar el umbral y
+    dejar una pérdida MENOR que sin freno.
+    """
+    # Mercado bajista pronunciado: cada BUY pierde rápido (≈3 pips/vela), así
+    # el drawdown se acumula pronto y el freno actúa a mitad del recorrido.
+    closes = [1.1000] * 6 + list(np.linspace(1.0990, 1.0000, 300))
+    df = _df_from_closes(closes)
+
+    sin_freno = Backtester(df, _base_params(strategy_name="test_always_buy")).run()
+    con_freno = Backtester(
+        df,
+        _base_params(
+            strategy_name="test_always_buy",
+            max_drawdown_pct=10,
+            drawdown_cooldown_bars=50,
+        ),
+    ).run()
+
+    # El freno deja una pérdida final menos negativa (protege capital).
+    assert con_freno.final_balance > sin_freno.final_balance
+    # Y abre menos operaciones (pausó durante los tramos malos).
+    assert len(con_freno.trades) < len(sin_freno.trades)
+
+
+def test_freno_drawdown_reanuda_tras_enfriamiento():
+    """
+    El freno NO debe bloquear el bot para siempre: tras el enfriamiento debe
+    reanudar. Con una caída seguida de una recuperación, el bot pausado debe
+    volver a operar en el tramo alcista (no quedarse plano hasta el final).
+    """
+    # Caída (activa el freno) → recuperación larga y sostenida.
+    closes = (
+        [1.1000] * 6
+        + list(np.linspace(1.0990, 1.0850, 60))   # baja: dispara el freno
+        + list(np.linspace(1.0851, 1.1400, 250))  # sube largo: debe reanudar
+    )
+    df = _df_from_closes(closes)
+    result = Backtester(
+        df,
+        _base_params(
+            strategy_name="test_always_buy",
+            max_drawdown_pct=10,
+            drawdown_cooldown_bars=30,
+        ),
+    ).run()
+
+    # Debe haber operaciones con entrada DESPUÉS del tramo de recuperación
+    # inicial — prueba de que reanudó y no quedó bloqueado.
+    entry_times = [t.entry_time for t in result.trades]
+    resume_point = df.index[100].to_pydatetime()
+    assert any(t > resume_point for t in entry_times), (
+        "El freno bloqueó el bot permanentemente: no reanudó tras el enfriamiento"
+    )
+
+
+def test_sl_por_atr_dimensiona_el_stop():
+    """
+    Con SL por ATR activado, el stop de la operación debe reflejar
+    ATR × multiplicador, NO los pips fijos. Mercado que sube ~2 pips/vela
+    (rango 4 pips/vela) → ATR ≈ 4 pips → SL ≈ 4 × 1.5 = 6 pips.
+    """
+    closes = [1.1000] * 6 + list(np.linspace(1.10002, 1.10600, 300))
+    df = _df_from_closes(closes)
+    params = _base_params(
+        strategy_name="test_always_buy",
+        stop_loss_pips=30,          # fijo alto: se debe IGNORAR
+        take_profit_pips=60,
+        atr_sl_enabled=True,
+        atr_period=14,
+        atr_sl_multiplier=1.5,
+        atr_tp_ratio=2.0,
+        atr_sl_min_pips=1.0,        # bajo para no enmascarar el cálculo
+    )
+    result = Backtester(df, params).run()
+    assert result.trades, "Debe abrir al menos una operación"
+    t = result.trades[0]
+    sl_pips = abs(t.entry_price - t.stop_loss) / 0.0001
+    tp_pips = abs(t.take_profit - t.entry_price) / 0.0001
+    assert sl_pips < 30            # mucho menor que el SL fijo → viene del ATR
+    assert 3 < sl_pips < 12        # ~6 pips (ATR ~4 × 1.5)
+    assert tp_pips == pytest.approx(sl_pips * 2.0, rel=0.02)  # R:R 1:2
+
+
+def test_sl_tp_estructural_de_la_estrategia_se_honra():
+    """
+    Si la señal trae sl_price/tp_price absolutos (ej. SMC: SL tras el
+    sweep), el backtester debe usarlos TAL CUAL en vez de los pips fijos,
+    y dimensionar el lote con esa distancia real.
+    """
+    closes = [1.1000] * 6 + list(np.linspace(1.1005, 1.1055, 20))
+    df = _df_from_closes(closes)
+    result = Backtester(
+        df, _base_params(strategy_name="test_structural_buy",
+                         stop_loss_pips=30, take_profit_pips=60),
+    ).run()
+
+    assert len(result.trades) == 1
+    t = result.trades[0]
+    assert t.stop_loss == pytest.approx(1.0985)     # el de la estrategia
+    assert t.take_profit == pytest.approx(1.1040)   # no el fijo de 60 pips
+    assert t.status == "CLOSED_TP"
+    assert t.exit_price == pytest.approx(1.1040)
+
+
+def test_salida_tecnica_de_estrategia_cierra_posicion():
+    """
+    Una estrategia que pide salir por check_exit debe cerrar la posición
+    ANTES de que toque SL o TP, con estado manual (salida discrecional).
+    """
+    # Precio que sube suave: sin la salida técnica no tocaría SL ni TP pronto.
+    closes = [1.1000] * 6 + list(np.linspace(1.10005, 1.10080, 20))
+    df = _df_from_closes(closes)
+    result = Backtester(
+        df, _base_params(strategy_name="test_buy_then_exit",
+                         stop_loss_pips=50, take_profit_pips=100),
+    ).run()
+
+    assert len(result.trades) == 1
+    t = result.trades[0]
+    assert t.status == "CLOSED_MANUAL"        # cerrada por la estrategia
+    assert t.exit_price is not None
+    # Salió a mitad de camino, sin tocar SL (1.0950) ni TP (1.1100).
+    assert 1.1000 < t.exit_price < 1.1010
+
+
+def test_freno_drawdown_desactivado_por_defecto():
+    """Con max_drawdown_pct=0 el resultado es idéntico a no tener freno."""
+    closes = [1.1000] * 6 + list(np.linspace(1.1005, 1.1100, 30))
+    df = _df_from_closes(closes)
+    a = Backtester(df, _base_params()).run()
+    b = Backtester(df, _base_params(max_drawdown_pct=0)).run()
+    assert a.final_balance == b.final_balance
 
 
 def test_backtest_equity_curve_consistente():

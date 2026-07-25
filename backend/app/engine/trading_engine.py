@@ -65,6 +65,9 @@ class TradingEngine:
         self._data_failures = 0
         # Último mensaje persistido (evita llenar la BD con warnings repetidos).
         self._last_persisted_msg = ""
+        # Estado del freno de drawdown en vivo.
+        self._peak_equity: float | None = None
+        self._paused_until: datetime | None = None
 
     # ------------------------------------------------------------------
     # Ciclo de vida
@@ -116,6 +119,10 @@ class TradingEngine:
             await self._manage_open_positions(db, config)
             await self._publish_account_snapshot()
 
+            # Freno de drawdown: si está activo y pausado, no abrir nuevas.
+            if not await self._drawdown_allows_trading(config):
+                return
+
             open_count = self._count_open_trades(db)
             assets = db.scalars(
                 select(Asset).where(
@@ -128,6 +135,55 @@ class TradingEngine:
                     break
                 if await self._evaluate_asset(db, config, asset):
                     open_count += 1
+
+    async def _drawdown_allows_trading(self, config: BotConfig) -> bool:
+        """
+        Freno de drawdown en vivo (mismo principio que en el backtest).
+
+        Sigue el PICO HISTÓRICO REAL de equity de la cuenta — nunca se
+        reinicia hacia abajo. Reiniciarlo tras cada pausa permitiría que
+        varias caídas sucesivas de "solo el X%" se encadenaran muy por
+        encima del X% configurado respecto al máximo real de la cuenta.
+        Si la equity cae ≥ max_drawdown_pct desde ese pico, pausa (o
+        extiende la pausa) la apertura de operaciones nuevas; no reanuda
+        hasta que el drawdown vuelva a estar por debajo del umbral Y haya
+        pasado el enfriamiento. Las posiciones ya abiertas se siguen
+        gestionando con normalidad (su SL/TP las protege).
+        """
+        if config.max_drawdown_pct <= 0:
+            return True
+
+        try:
+            info = await asyncio.to_thread(self.connector.get_account_info)
+        except Exception:  # noqa: BLE001 — sin datos de cuenta, no bloquea
+            return True
+
+        if self._peak_equity is None or info.equity > self._peak_equity:
+            self._peak_equity = info.equity
+        drawdown = (
+            (self._peak_equity - info.equity) / self._peak_equity
+            if self._peak_equity > 0 else 0.0
+        )
+        now = datetime.now(timezone.utc)
+
+        if drawdown * 100 >= config.max_drawdown_pct:
+            if self._paused_until is None:
+                await self._log(
+                    "WARNING",
+                    f"FRENO DE DRAWDOWN activado: caída de {drawdown * 100:.1f}% "
+                    "desde el máximo histórico. Se pausan las entradas.",
+                )
+            self._paused_until = now + timedelta(hours=config.drawdown_cooldown_hours)
+            return False
+
+        if self._paused_until is not None:
+            if now < self._paused_until:
+                return False
+            self._paused_until = None
+            await self._log("INFO", "Freno de drawdown: enfriamiento terminado, "
+                                    "reanudando la apertura de operaciones.")
+
+        return True
 
     # ------------------------------------------------------------------
     # 1) Supervisión de posiciones abiertas
@@ -146,11 +202,61 @@ class TradingEngine:
 
         for trade in open_trades:
             if trade.broker_ticket in broker_positions:
+                if await self._maybe_strategy_exit(db, config, trade):
+                    continue  # ya cerrada por la estrategia
                 await self._adjust_stops(db, config, trade,
                                          broker_positions[trade.broker_ticket])
             else:
                 await self._register_close(db, trade)
         db.commit()
+
+    async def _maybe_strategy_exit(self, db, config: BotConfig, trade: Trade) -> bool:
+        """
+        Salida técnica de la estrategia (reglas 5.3/5.4 del manual EMA+ADX):
+        si `check_exit` pide cerrar, envía el cierre al broker y registra la
+        operación. Devuelve True si la posición se cerró.
+        """
+        asset = db.scalar(
+            select(Asset).where(
+                Asset.user_id == self.user_id, Asset.symbol == trade.symbol
+            )
+        )
+        if asset is None:
+            return False
+
+        strategy = get_strategy(config.strategy_name, config.strategy_params)
+        tf_minutes = _TIMEFRAME_MINUTES[asset.timeframe]
+        date_to = datetime.now(timezone.utc)
+        date_from = date_to - timedelta(minutes=tf_minutes * HISTORY_BARS)
+        try:
+            df = await asyncio.to_thread(
+                self.connector.get_historical_data,
+                asset.symbol, asset.timeframe, date_from, date_to,
+            )
+        except Exception:  # noqa: BLE001 — sin velas, deja que SL/TP gestionen
+            return False
+        if len(df) < strategy.min_bars:
+            return False
+        if not strategy.check_exit(df, trade.symbol, trade.direction.value):
+            return False
+
+        result = await asyncio.to_thread(
+            self.connector.close_position, trade.broker_ticket
+        )
+        if not result.success:
+            await self._log(
+                "WARNING",
+                f"Salida técnica de {trade.symbol} rechazada: {result.message}",
+            )
+            return False
+
+        await self._log(
+            "INFO",
+            f"Salida técnica de la estrategia en {trade.symbol} "
+            f"({trade.direction.value}): condición de cierre cumplida.",
+        )
+        await self._register_close(db, trade)
+        return True
 
     async def _adjust_stops(
         self, db, config: BotConfig, trade: Trade, position: OpenPosition
@@ -322,10 +428,13 @@ class TradingEngine:
         if already_open:
             return False
 
-        return await self._open_trade(db, config, asset, signal.type.value)
+        return await self._open_trade(
+            db, config, asset, signal.type.value, df, signal
+        )
 
     async def _open_trade(
-        self, db, config: BotConfig, asset: Asset, direction: str
+        self, db, config: BotConfig, asset: Asset, direction: str,
+        df=None, signal=None,
     ) -> bool:
         """Calcula lote/SL/TP, envía la orden y persiste la operación."""
         tick = await asyncio.to_thread(self.connector.get_price, asset.symbol)
@@ -342,14 +451,25 @@ class TradingEngine:
             asset.symbol, asset.pip_size, entry_ref, account.currency,
             contract_size=specs.contract_size,
         )
+        # SL/TP ESTRUCTURAL: si la estrategia trae niveles absolutos en la
+        # señal (sl_price/tp_price, ej. SMC), se honran tal cual; si no,
+        # SL/TP fijos de la config o adaptativos por ATR (Método B).
+        structural = rm.structural_levels(
+            getattr(signal, "metadata", None), direction, entry_ref
+        )
+        if structural is not None:
+            sl_pips = abs(entry_ref - structural[0]) / asset.pip_size
+            tp_pips = abs(structural[1] - entry_ref) / asset.pip_size
+        else:
+            sl_pips, tp_pips = self._effective_sl_tp_pips(config, asset, df)
         lot = rm.calc_lot_size(
             account.balance, config.risk_per_trade_pct,
-            config.stop_loss_pips, pip_value,
+            sl_pips, pip_value,
             volume_min=specs.volume_min, volume_step=specs.volume_step,
         )
         # Aviso de transparencia: si el lote mínimo de la cuenta obliga a
         # arriesgar más de lo configurado, el usuario debe saberlo.
-        min_risk = specs.volume_min * config.stop_loss_pips * pip_value
+        min_risk = specs.volume_min * sl_pips * pip_value
         allowed_risk = account.balance * config.risk_per_trade_pct / 100.0
         if lot == specs.volume_min and min_risk > allowed_risk * 1.05:
             await self._log(
@@ -361,8 +481,7 @@ class TradingEngine:
                 f"cuenta Micro/Cent o un balance mayor.",
             )
         sl, tp = rm.calc_sl_tp(
-            direction, entry_ref,
-            config.stop_loss_pips, config.take_profit_pips, asset.pip_size,
+            direction, entry_ref, sl_pips, tp_pips, asset.pip_size,
         )
 
         result = await asyncio.to_thread(
@@ -408,6 +527,20 @@ class TradingEngine:
             },
         )
         return True
+
+    def _effective_sl_tp_pips(self, config: BotConfig, asset: Asset, df) -> tuple[float, float]:
+        """SL/TP en pips: fijos de la config o adaptativos por ATR (Método B)."""
+        atr_value = 0.0
+        if config.atr_sl_enabled and df is not None and len(df) >= 2:
+            atr_value = rm.atr_pips(
+                df["high"].to_numpy(), df["low"].to_numpy(),
+                df["close"].to_numpy(), int(config.atr_period), asset.pip_size,
+            )
+        return rm.resolve_sl_tp_pips(
+            config.stop_loss_pips, config.take_profit_pips, config.atr_sl_enabled,
+            atr_value, config.atr_sl_multiplier, config.atr_tp_ratio,
+            config.atr_sl_min_pips,
+        )
 
     # ------------------------------------------------------------------
     # Helpers

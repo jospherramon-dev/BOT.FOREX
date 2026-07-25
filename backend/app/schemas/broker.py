@@ -24,6 +24,9 @@ class BrokerCredentialIn(BaseModel):
     server: str | None = None
     account_id: str | None = None
     is_demo: bool = True
+    # MT5: ruta al terminal64.exe de ESTE broker. Opcional; sólo necesaria
+    # si hay varios terminales MT5 instalados en la PC.
+    terminal_path: str | None = Field(default=None, max_length=500)
 
 
 class BrokerCredentialOut(BaseModel):

@@ -152,10 +152,17 @@ async def run_backtest(
             risk_per_trade_pct=payload.risk_per_trade_pct,
             stop_loss_pips=payload.stop_loss_pips,
             take_profit_pips=payload.take_profit_pips,
+            atr_sl_enabled=payload.atr_sl_enabled,
+            atr_period=payload.atr_period,
+            atr_sl_multiplier=payload.atr_sl_multiplier,
+            atr_tp_ratio=payload.atr_tp_ratio,
+            atr_sl_min_pips=payload.atr_sl_min_pips,
             break_even_enabled=payload.break_even_enabled,
             break_even_trigger_pips=payload.break_even_trigger_pips,
             trailing_stop_enabled=payload.trailing_stop_enabled,
             trailing_stop_pips=payload.trailing_stop_pips,
+            max_drawdown_pct=payload.max_drawdown_pct,
+            drawdown_cooldown_bars=payload.drawdown_cooldown_bars,
         )
         backtester = Backtester(df, params)
         if len(df) <= backtester.strategy.min_bars:
@@ -292,10 +299,17 @@ async def start_optimization(
         risk_per_trade_pct=payload.risk_per_trade_pct,
         stop_loss_pips=payload.stop_loss_pips,
         take_profit_pips=payload.take_profit_pips,
+        atr_sl_enabled=payload.atr_sl_enabled,
+        atr_period=payload.atr_period,
+        atr_sl_multiplier=payload.atr_sl_multiplier,
+        atr_tp_ratio=payload.atr_tp_ratio,
+        atr_sl_min_pips=payload.atr_sl_min_pips,
         break_even_enabled=payload.break_even_enabled,
         break_even_trigger_pips=payload.break_even_trigger_pips,
         trailing_stop_enabled=payload.trailing_stop_enabled,
         trailing_stop_pips=payload.trailing_stop_pips,
+        max_drawdown_pct=payload.max_drawdown_pct,
+        drawdown_cooldown_bars=payload.drawdown_cooldown_bars,
     )
 
     job = optimizer.create_job(

@@ -82,6 +82,21 @@ class BaseStrategy(ABC):
             Signal con BUY / SELL / HOLD para la última vela.
         """
 
+    def check_exit(self, df: pd.DataFrame, symbol: str, direction: str) -> bool:
+        """
+        ¿Debe CERRARSE ahora una posición abierta en `direction` ("BUY"/"SELL")?
+
+        Salida discrecional de la estrategia, INDEPENDIENTE del SL/TP (que
+        gestiona el motor de riesgo). Por defecto una estrategia no fuerza
+        salidas —devuelve False— y las posiciones viven hasta tocar SL/TP,
+        break-even o trailing. Las estrategias que quieran una salida técnica
+        (p. ej. "cerrar si la fuerza de tendencia se agota") la implementan.
+
+        Se llama en cada vela cerrada nueva mientras haya posición abierta,
+        con el mismo DataFrame que recibiría `calculate_signal`.
+        """
+        return False
+
     def validate_data(self, df: pd.DataFrame) -> None:
         """Comprueba que hay velas suficientes y columnas correctas."""
         required = {"open", "high", "low", "close"}

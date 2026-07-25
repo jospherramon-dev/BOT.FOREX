@@ -18,6 +18,12 @@ import {
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { api } from '../api/client';
+import {
+  ORB_RISK_BOT,
+  ORB_STRATEGY,
+  ORB_STRATEGY_PARAMS,
+  visibleStrategies,
+} from '../lib/presets';
 import Panel from '../components/Panel';
 
 const TABS = [
@@ -60,7 +66,7 @@ function BrokerTab() {
   const [creds, setCreds] = useState([]);
   const [form, setForm] = useState({
     broker_type: 'OANDA', label: 'Mi cuenta', login: '', password: '',
-    api_key: '', server: '', account_id: '', is_demo: true,
+    api_key: '', server: '', account_id: '', is_demo: true, terminal_path: '',
   });
   const [testResult, setTestResult] = useState({});
   const [busy, setBusy] = useState(false);
@@ -136,7 +142,24 @@ function BrokerTab() {
               </div>
               <div className="col-span-2">
                 <label className="label">Servidor</label>
-                <input className="input" placeholder="Pepperstone-Demo" value={form.server} onChange={set('server')} required />
+                <input className="input" placeholder="XMGlobal-MT5 7" value={form.server} onChange={set('server')} required />
+                <p className="mt-1 text-xs text-term-muted">
+                  Debe coincidir EXACTO con el de su cuenta en MT5 (clic derecho
+                  sobre la cuenta en el Navegador → Propiedades).
+                </p>
+              </div>
+              <div className="col-span-2">
+                <label className="label">Ruta del terminal (opcional)</label>
+                <input
+                  className="input"
+                  placeholder="C:\Program Files\XM MT5\terminal64.exe"
+                  value={form.terminal_path}
+                  onChange={set('terminal_path')}
+                />
+                <p className="mt-1 text-xs text-term-muted">
+                  Sólo si tiene VARIOS terminales MT5 instalados (ej. XM e IC
+                  Markets). Indica cuál usar para esta cuenta.
+                </p>
               </div>
             </div>
           ) : (
@@ -317,11 +340,17 @@ function AssetsTab() {
 
 const RISK_FIELDS = [
   ['risk_per_trade_pct', 'Riesgo por trade (%)', 0.1],
-  ['stop_loss_pips', 'Stop Loss (pips)', 1],
-  ['take_profit_pips', 'Take Profit (pips)', 1],
+  ['stop_loss_pips', 'Stop Loss fijo (pips)', 1],
+  ['take_profit_pips', 'Take Profit fijo (pips)', 1],
+  ['atr_period', 'ATR período', 1],
+  ['atr_sl_multiplier', 'ATR × mult. (SL)', 0.1],
+  ['atr_tp_ratio', 'ATR ratio R:R (TP)', 0.1],
+  ['atr_sl_min_pips', 'ATR SL mínimo (pips)', 1],
   ['break_even_trigger_pips', 'Disparo break-even (pips)', 1],
   ['trailing_stop_pips', 'Trailing stop (pips)', 1],
   ['max_open_trades', 'Máx. operaciones abiertas', 1],
+  ['max_drawdown_pct', 'Freno drawdown % (0=off)', 1],
+  ['drawdown_cooldown_hours', 'Enfriamiento freno (horas)', 1],
 ];
 
 function RiskTab() {
@@ -370,6 +399,19 @@ function RiskTab() {
     });
   };
 
+  // Carga una configuración recomendada de un clic; el usuario solo pulsa
+  // "Guardar" para aplicarla al bot.
+  const applyPreset = (strategyName, riskPreset, paramOverrides) => () => {
+    setSaved(false);
+    const strat = strategies.find((s) => s.name === strategyName);
+    setConfig({
+      ...config,
+      ...riskPreset,
+      strategy_name: strategyName,
+      strategy_params: { ...(strat?.default_params ?? {}), ...paramOverrides },
+    });
+  };
+
   const save = async (e) => {
     e.preventDefault();
     setError('');
@@ -391,17 +433,27 @@ function RiskTab() {
     <Panel
       title="Gestión de riesgo del motor"
       actions={
-        <span className="text-xs text-term-dim">
-          Estrategia activa:{' '}
-          <span className="font-semibold text-term-accent">{config.strategy_name}</span>
-        </span>
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-term-dim">
+            Estrategia activa:{' '}
+            <span className="font-semibold text-term-accent">{config.strategy_name}</span>
+          </span>
+          <button
+            type="button"
+            onClick={applyPreset(ORB_STRATEGY, ORB_RISK_BOT, ORB_STRATEGY_PARAMS)}
+            className="btn-ghost !py-1 !px-2 text-xs"
+            title="Carga la configuración recomendada de ORB (ruptura del rango de apertura). Luego pulsa Guardar."
+          >
+            Preset ORB
+          </button>
+        </div>
       }
     >
       <form onSubmit={save} className="space-y-4 max-w-2xl">
         <div>
           <label className="label">Estrategia</label>
           <select className="input" value={config.strategy_name} onChange={changeStrategy}>
-            {strategies.map((s) => (
+            {visibleStrategies(strategies, config.strategy_name).map((s) => (
               <option key={s.name} value={s.name}>{s.name}</option>
             ))}
           </select>
@@ -438,6 +490,10 @@ function RiskTab() {
           ))}
         </div>
         <div className="flex flex-wrap gap-6">
+          <label className="flex items-center gap-2 text-sm text-term-dim">
+            <input type="checkbox" checked={config.atr_sl_enabled} onChange={set('atr_sl_enabled')} />
+            SL/TP por ATR (ignora los pips fijos)
+          </label>
           <label className="flex items-center gap-2 text-sm text-term-dim">
             <input type="checkbox" checked={config.break_even_enabled} onChange={set('break_even_enabled')} />
             Break-even automático

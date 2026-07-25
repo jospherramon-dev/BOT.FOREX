@@ -19,6 +19,12 @@ import {
   YAxis,
 } from 'recharts';
 import { api } from '../api/client';
+import {
+  ORB_BACKTEST,
+  ORB_STRATEGY,
+  RECOMMENDED_STRATEGY_PARAMS,
+  visibleStrategies,
+} from '../lib/presets';
 import ChartTooltip from '../components/ChartTooltip';
 import DirectionBadge from '../components/DirectionBadge';
 import Panel from '../components/Panel';
@@ -101,10 +107,17 @@ function OptimizationPanel({ form, strategies }) {
         risk_per_trade_pct: +form.risk_per_trade_pct,
         stop_loss_pips: +form.stop_loss_pips,
         take_profit_pips: +form.take_profit_pips,
+        atr_sl_enabled: form.atr_sl_enabled,
+        atr_period: +form.atr_period,
+        atr_sl_multiplier: +form.atr_sl_multiplier,
+        atr_tp_ratio: +form.atr_tp_ratio,
+        atr_sl_min_pips: +form.atr_sl_min_pips,
         break_even_enabled: form.break_even_enabled,
         break_even_trigger_pips: +form.break_even_trigger_pips,
         trailing_stop_enabled: form.trailing_stop_enabled,
         trailing_stop_pips: +form.trailing_stop_pips,
+        max_drawdown_pct: +form.max_drawdown_pct,
+        drawdown_cooldown_bars: +form.drawdown_cooldown_bars,
         stop_loss_grid: parseList(grids.sl),
         take_profit_grid: parseList(grids.tp),
         break_even_grid: parseList(grids.be),
@@ -390,19 +403,23 @@ function OptimizationPanel({ form, strategies }) {
 const DEFAULT_FORM = {
   dataset: '',
   symbol: 'EURUSD',
-  timeframe: 'M15',
   date_from: '',
   date_to: '',
   initial_balance: 10000,
-  spread_pips: 1.0,
-  strategy_name: 'ma_rsi_crossover',
-  risk_per_trade_pct: 1.0,
+  strategy_name: ORB_STRATEGY,
+  // SL/TP fijos y ATR: RESPALDO — la ORB trae SL/TP estructurales (por el
+  // tamaño del rango) en cada señal. El resto de valores llegan por ORB_BACKTEST.
   stop_loss_pips: 30,
   take_profit_pips: 60,
-  break_even_enabled: true,
   break_even_trigger_pips: 20,
-  trailing_stop_enabled: false,
   trailing_stop_pips: 15,
+  atr_period: 14,
+  atr_sl_multiplier: 1.5,
+  atr_tp_ratio: 2.0,
+  atr_sl_min_pips: 5,
+  ...ORB_BACKTEST,
+  // Se rellena con los recomendados de la estrategia al cargar /strategies.
+  strategy_params: {},
 };
 
 export default function Backtest() {
@@ -421,13 +438,48 @@ export default function Backtest() {
   useEffect(() => {
     refreshDatasets();
     refreshRuns();
-    api.get('/bot/strategies').then(setStrategies).catch(() => {});
+    api.get('/bot/strategies').then((list) => {
+      setStrategies(list);
+      // Poblar los parámetros de la estrategia por defecto para que sus
+      // valores se envíen aunque el usuario no toque las casillas.
+      const active = list.find((s) => s.name === DEFAULT_FORM.strategy_name);
+      if (active) {
+        // Base = defaults de la estrategia + overrides recomendados para
+        // los datos del usuario (XM EUR/USD), si los hay para esa estrategia.
+        const recommended = RECOMMENDED_STRATEGY_PARAMS[active.name] ?? {};
+        setForm((f) => ({
+          ...f,
+          strategy_params: Object.keys(f.strategy_params ?? {}).length
+            ? f.strategy_params
+            : { ...active.default_params, ...recommended },
+        }));
+      }
+    }).catch(() => {});
   }, []);
 
   const set = (field) => (e) => {
     const value = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
     setForm({ ...form, [field]: value });
   };
+
+  // Parámetros numéricos de la estrategia seleccionada (ej. EMA_TREND_PERIOD).
+  const selectedStrategy = strategies.find((s) => s.name === form.strategy_name);
+  const strategyNumericParams = Object.entries(selectedStrategy?.default_params ?? {})
+    .filter(([, v]) => typeof v === 'number');
+
+  const changeStrategy = (e) => {
+    // Al cambiar de estrategia, cargar sus defaults + recomendados.
+    const next = strategies.find((s) => s.name === e.target.value);
+    const recommended = RECOMMENDED_STRATEGY_PARAMS[e.target.value] ?? {};
+    setForm({
+      ...form,
+      strategy_name: e.target.value,
+      strategy_params: { ...(next?.default_params ?? {}), ...recommended },
+    });
+  };
+
+  const setStrategyParam = (name) => (e) =>
+    setForm({ ...form, strategy_params: { ...form.strategy_params, [name]: e.target.value } });
 
   const upload = async (e) => {
     const file = e.target.files?.[0];
@@ -455,15 +507,27 @@ export default function Backtest() {
     setRunning(true);
     setResult(null);
     try {
+      // Convertir los parámetros de estrategia a número antes de enviarlos.
+      const strategy_params = {};
+      for (const [name, value] of Object.entries(form.strategy_params ?? {})) {
+        strategy_params[name] = typeof value === 'number' ? value : +value;
+      }
       const payload = {
         ...form,
+        strategy_params,
         initial_balance: +form.initial_balance,
         spread_pips: +form.spread_pips,
         risk_per_trade_pct: +form.risk_per_trade_pct,
         stop_loss_pips: +form.stop_loss_pips,
         take_profit_pips: +form.take_profit_pips,
+        atr_period: +form.atr_period,
+        atr_sl_multiplier: +form.atr_sl_multiplier,
+        atr_tp_ratio: +form.atr_tp_ratio,
+        atr_sl_min_pips: +form.atr_sl_min_pips,
         break_even_trigger_pips: +form.break_even_trigger_pips,
         trailing_stop_pips: +form.trailing_stop_pips,
+        max_drawdown_pct: +form.max_drawdown_pct,
+        drawdown_cooldown_bars: +form.drawdown_cooldown_bars,
         date_from: form.date_from ? new Date(form.date_from).toISOString() : null,
         date_to: form.date_to ? new Date(form.date_to).toISOString() : null,
       };
@@ -563,12 +627,24 @@ export default function Backtest() {
             </div>
             <div className="col-span-2">
               <label className="label">Estrategia</label>
-              <select className="input" value={form.strategy_name} onChange={set('strategy_name')}>
-                {strategies.map((s) => (
+              <select className="input" value={form.strategy_name} onChange={changeStrategy}>
+                {visibleStrategies(strategies, form.strategy_name).map((s) => (
                   <option key={s.name} value={s.name}>{s.name}</option>
                 ))}
               </select>
             </div>
+            {/* Parámetros de la estrategia (ej. EMA_TREND_PERIOD para el filtro) */}
+            {strategyNumericParams.map(([name, def]) => (
+              <div key={name}>
+                <label className="label">{name}</label>
+                <input
+                  type="number"
+                  className="input"
+                  value={form.strategy_params?.[name] ?? def}
+                  onChange={setStrategyParam(name)}
+                />
+              </div>
+            ))}
             <div>
               <label className="label">Riesgo %</label>
               <input type="number" step="0.1" className="input" value={form.risk_per_trade_pct} onChange={set('risk_per_trade_pct')} />
@@ -580,6 +656,26 @@ export default function Backtest() {
             <div>
               <label className="label">TP (pips)</label>
               <input type="number" className="input" value={form.take_profit_pips} onChange={set('take_profit_pips')} />
+            </div>
+            <label className="flex items-center gap-2 text-sm text-term-dim col-span-2">
+              <input type="checkbox" checked={form.atr_sl_enabled} onChange={set('atr_sl_enabled')} />
+              SL/TP por ATR (ignora SL/TP fijos de arriba)
+            </label>
+            <div>
+              <label className="label">ATR período</label>
+              <input type="number" className="input" value={form.atr_period} onChange={set('atr_period')} />
+            </div>
+            <div>
+              <label className="label">ATR × mult. (SL)</label>
+              <input type="number" step="0.1" className="input" value={form.atr_sl_multiplier} onChange={set('atr_sl_multiplier')} />
+            </div>
+            <div>
+              <label className="label">ATR ratio R:R (TP)</label>
+              <input type="number" step="0.1" className="input" value={form.atr_tp_ratio} onChange={set('atr_tp_ratio')} />
+            </div>
+            <div>
+              <label className="label">ATR SL mínimo (pips)</label>
+              <input type="number" className="input" value={form.atr_sl_min_pips} onChange={set('atr_sl_min_pips')} />
             </div>
             <div>
               <label className="label">BE trigger (pips)</label>
@@ -596,6 +692,20 @@ export default function Backtest() {
             <div>
               <label className="label">Trailing (pips)</label>
               <input type="number" className="input" value={form.trailing_stop_pips} onChange={set('trailing_stop_pips')} />
+            </div>
+            <div>
+              <label className="label">Freno drawdown %</label>
+              <input type="number" className="input" placeholder="0 = off" value={form.max_drawdown_pct} onChange={set('max_drawdown_pct')} />
+              <p className="mt-1 text-[11px] text-term-muted">
+                Pausa las entradas si la cuenta cae este % desde su máximo (0 = desactivado).
+              </p>
+            </div>
+            <div>
+              <label className="label">Enfriamiento (velas)</label>
+              <input type="number" className="input" value={form.drawdown_cooldown_bars} onChange={set('drawdown_cooldown_bars')} />
+              <p className="mt-1 text-[11px] text-term-muted">
+                Velas en pausa tras activar el freno (M15: 480 ≈ 5 días).
+              </p>
             </div>
           </div>
 

@@ -8,11 +8,19 @@ sumarla al registro.
 
 from app.strategies.base_strategy import BaseStrategy, Signal, SignalType
 from app.strategies.ma_rsi_crossover import MaRsiCrossoverStrategy
+from app.strategies.opening_range_breakout import OpeningRangeBreakoutStrategy
 from app.strategies.scalping_bb_rsi import ScalpingBbRsiStrategy
+from app.strategies.scalping_ema_adx import ScalpingEmaAdxStrategy
+from app.strategies.smc_liquidity_sweep import SmcLiquiditySweepStrategy
+from app.strategies.trend_ema_pullback import TrendEmaPullbackStrategy
 
 STRATEGY_REGISTRY: dict[str, type[BaseStrategy]] = {
     MaRsiCrossoverStrategy.name: MaRsiCrossoverStrategy,
+    OpeningRangeBreakoutStrategy.name: OpeningRangeBreakoutStrategy,
     ScalpingBbRsiStrategy.name: ScalpingBbRsiStrategy,
+    ScalpingEmaAdxStrategy.name: ScalpingEmaAdxStrategy,
+    SmcLiquiditySweepStrategy.name: SmcLiquiditySweepStrategy,
+    TrendEmaPullbackStrategy.name: TrendEmaPullbackStrategy,
 }
 
 
